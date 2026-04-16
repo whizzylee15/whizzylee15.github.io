@@ -1,251 +1,299 @@
-import express from "express";
-import { createServer as createViteServer } from "vite";
-import path from "path";
-import axios from "axios";
-import cors from "cors";
-import dotenv from "dotenv";
-import sharp from "sharp";
-import multer from "multer";
-import pako from "pako";
-import ffmpeg from "fluent-ffmpeg";
-import ffmpegPath from "ffmpeg-static";
-import fs from "fs/promises";
-import os from "os";
-import { v4 as uuidv4 } from 'uuid';
+import 'dotenv/config';
+import express from 'express';
+import cookieParser from 'cookie-parser';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+import { createServer as createViteServer } from 'vite';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { supabaseMiddleware } from './src/utils/supabase/middleware.ts';
+import { createClient } from './src/utils/supabase/server.ts';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-if (ffmpegPath) {
-  ffmpeg.setFfmpegPath(ffmpegPath);
-}
+async function startServer() {
+  const app = express();
+  app.use(cookieParser());
+  app.use(express.json());
+  app.use(supabaseMiddleware);
 
-const app = express();
-const PORT = 3000;
+  const httpServer = createServer(app);
+  const io = new Server(httpServer, {
+    cors: {
+      origin: "*",
+      methods: ["GET", "POST"]
+    }
+  });
 
-app.use(cors());
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  const PORT = 3000;
 
-const upload = multer({ 
-  limits: { fileSize: 30 * 1024 * 1024 } // 30MB limit for video/animations
-});
-
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-
-/**
- * ANIMATED VIDEO CONVERTER
- * Converts WebM (or other formats) to Animated WebP
- */
-async function convertVideoToWebP(inputBuffer: Buffer): Promise<Buffer> {
-  const tempId = uuidv4();
-  const inputPath = path.join(os.tmpdir(), `${tempId}.webm`);
-  const outputPath = path.join(os.tmpdir(), `${tempId}.webp`);
-
-  try {
-    await fs.writeFile(inputPath, inputBuffer);
-    
-    await new Promise((resolve, reject) => {
-      ffmpeg(inputPath)
-        .size('512x512')
-        .fps(15) // Optimized for stickers
-        .duration(3) // Cap at 3 seconds for stability
-        .outputOptions([
-          '-vcodec libwebp',
-          '-lossless 0',
-          '-compression_level 4',
-          '-q:v 70',
-          '-loop 0',
-          '-preset default',
-          '-an', // No audio
-          '-vsync 0'
-        ])
-        .on('end', resolve)
-        .on('error', reject)
-        .save(outputPath);
-    });
-
-    return await fs.readFile(outputPath);
-  } finally {
-    await fs.unlink(inputPath).catch(() => {});
-    await fs.unlink(outputPath).catch(() => {});
-  }
-}
-
-/**
- * ADVANCED WHATSAPP CONVERSION ENGINE
- * Optimized for: 512x512, Strict Limits, 16px padding, Smooth Playback
- */
-async function processStickerBuffer(inputBuffer: Buffer, isAnimated: boolean = false): Promise<Buffer> {
-  const WHATSAPP_SIZE = 512;
-  const PADDING = 16;
-  const INNER_SIZE = WHATSAPP_SIZE - (PADDING * 2);
-
-  // Get initial metadata to check frame count and delays
-  const metadata = await sharp(inputBuffer, { animated: isAnimated }).metadata();
-  const frameCount = metadata.pages || 1;
-  
-  // Update isAnimated based on actual metadata
-  const reallyAnimated = isAnimated || frameCount > 1;
-
-  let quality = reallyAnimated ? 60 : 80;
-  const sizeLimit = reallyAnimated ? 490 * 1024 : 99 * 1024;
-
-  const getPipeline = (q: number) => {
-    let p = sharp(inputBuffer, { animated: reallyAnimated })
-      .resize(INNER_SIZE, INNER_SIZE, {
-        fit: 'contain',
-        background: { r: 0, g: 0, b: 0, alpha: 0 }
-      })
-      .extend({
-        top: PADDING,
-        bottom: PADDING,
-        left: PADDING,
-        right: PADDING,
-        background: { r: 0, g: 0, b: 0, alpha: 0 }
-      });
-
-    if (reallyAnimated) {
-      return p.webp({ 
-        effort: 6, 
-        quality: q, 
-        loop: 0, 
-        smartSubsample: true
-      });
-    } else {
-      return p.webp({ effort: 6, quality: q, smartSubsample: true });
+  // In-memory state for rooms
+  // In a real app, this would be synced with a database like Firebase or MongoDB
+  const roomsState: Record<string, any> = {
+    'room1': {
+      currentAuction: null,
+      bidHistory: [],
+      liveChat: []
+    },
+    'room2': {
+      currentAuction: null,
+      bidHistory: [],
+      liveChat: []
+    },
+    'room3': {
+      currentAuction: null,
+      bidHistory: [],
+      liveChat: []
     }
   };
 
-  let buffer = await getPipeline(quality).toBuffer();
+  const connectedUsers = new Map<string, string>(); // socket.id -> uid
 
-  // Recursive compression loop with better fallbacks
-  while (buffer.length > sizeLimit && quality > 5) {
-    quality -= 5;
-    buffer = await getPipeline(quality).toBuffer();
-  }
-
-  return buffer;
-}
-
-// API Routes
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok" });
-});
-
-/**
- * Enhanced Processing Endpoint (Step 2)
- */
-app.post("/api/sticker/process", upload.single("image"), async (req, res) => {
-  try {
-    let buffer = req.file ? req.file.buffer : (req.body.image ? Buffer.from(req.body.image, 'base64') : null);
-    if (!buffer) return res.status(400).json({ error: "No image provided" });
-
-    const originalName = req.file?.originalname || "";
-    let isAnimated = req.body.isAnimated === 'true' || req.body.isAnimated === true || originalName.endsWith('.webm') || originalName.endsWith('.tgs');
-
-    // 1. Handle TGS (Lottie)
-    if (buffer[0] === 0x1f && buffer[1] === 0x8b || originalName.endsWith('.tgs')) {
-      try {
-        const decompressed = pako.ungzip(buffer);
-        buffer = Buffer.from(decompressed);
-        // Note: Full TGS rendering usually needs a Lottie player.
-        // Sharp might only take the first frame of raw JSON if it treats as SVG,
-        // but for now we prioritize not crashing and attempting a fallback.
-      } catch (e) {
-        console.warn("Decompression failed");
+  function getOnlineCount() {
+    const uids = new Set<string>();
+    
+    io.sockets.sockets.forEach((socket) => {
+      const uid = connectedUsers.get(socket.id);
+      if (uid) {
+        uids.add(uid);
       }
-    }
+    });
+    
+    return uids.size;
+  }
 
-    // 2. Handle Video (WebM)
-    if (originalName.endsWith('.webm') || (buffer.slice(0, 4).toString() === 'E\x1f\xa3g')) { // Simple WebM signature
-      try {
-        buffer = await convertVideoToWebP(buffer);
-        isAnimated = true;
-      } catch (videoErr) {
-        console.error("Video conversion failed:", videoErr);
+  function broadcastOnlineCount() {
+    const count = getOnlineCount();
+    console.log(`[Socket.io] Broadcasting registered online count: ${count} (Total sockets: ${io.sockets.sockets.size})`);
+    io.emit('online_count', count);
+  }
+
+  // Periodic broadcast to ensure sync
+  const broadcastInterval = setInterval(broadcastOnlineCount, 30000);
+
+  io.on('connection', (socket) => {
+    console.log(`[Socket.io] New connection: ${socket.id}`);
+    
+    // Notify all clients of the new connection
+    broadcastOnlineCount();
+
+    socket.on('user_connected', (uid: string) => {
+      if (!uid) return;
+      console.log(`[Socket.io] User ${uid} identified on socket ${socket.id}`);
+      connectedUsers.set(socket.id, uid);
+      broadcastOnlineCount();
+    });
+
+    socket.on('user_disconnected', () => {
+      console.log(`[Socket.io] User logged out on socket ${socket.id}`);
+      connectedUsers.delete(socket.id);
+      broadcastOnlineCount();
+    });
+
+    socket.on('disconnect', () => {
+      console.log(`[Socket.io] Socket disconnected: ${socket.id}`);
+      connectedUsers.delete(socket.id);
+      broadcastOnlineCount();
+    });
+
+    socket.on('request_online_count', () => {
+      socket.emit('online_count', getOnlineCount());
+    });
+
+    socket.on('join_room', (roomId: string) => {
+      const roomPath = roomId.toLowerCase().replace(' ', '');
+      socket.join(roomPath);
+      console.log(`User ${socket.id} joined room: ${roomPath}`);
+      
+      // Send initial state
+      socket.emit('initial_state', roomsState[roomPath] || {
+        currentAuction: null,
+        bidHistory: [],
+        liveChat: []
+      });
+
+      // Send rooms status update to the connecting client
+      const status: Record<string, string | null> = {};
+      Object.keys(roomsState).forEach(roomKey => {
+        const auction = roomsState[roomKey].currentAuction;
+        status[roomKey] = (auction && !auction.isSold) ? auction.name : null;
+      });
+      socket.emit('rooms_status', status);
+    });
+
+    socket.on('send_message', (data: { roomId: string; message: any }) => {
+      const roomPath = data.roomId.toLowerCase().replace(' ', '');
+      const newMessage = {
+        id: Math.random().toString(36).substr(2, 9),
+        ...data.message,
+        timestamp: Date.now()
+      };
+      
+      if (roomsState[roomPath]) {
+        roomsState[roomPath].liveChat.push(newMessage);
+        if (roomsState[roomPath].liveChat.length > 50) {
+          roomsState[roomPath].liveChat.shift();
+        }
       }
+      
+      io.to(roomPath).emit('new_message', newMessage);
+    });
+
+    socket.on('place_bid', (data: { roomId: string; bid: any }) => {
+      const roomPath = data.roomId.toLowerCase().replace(' ', '');
+      const state = roomsState[roomPath];
+      
+      if (!state || !state.currentAuction || state.currentAuction.isSold) return;
+
+      const amount = data.bid.amount;
+      const currentPrice = state.currentAuction.currentPrice || 0;
+      const minIncrement = 1000000;
+
+      if (amount < currentPrice + minIncrement) {
+        socket.emit('bid_error', 'Bid too low');
+        return;
+      }
+
+      // Update state
+      state.currentAuction.currentPrice = amount;
+      state.currentAuction.winner = data.bid.bidder;
+      state.currentAuction.winnerUid = data.bid.uid;
+
+      const newBidEntry = {
+        id: Math.random().toString(36).substr(2, 9),
+        ...data.bid,
+        timestamp: Date.now()
+      };
+      state.bidHistory.unshift(newBidEntry);
+      if (state.bidHistory.length > 50) {
+        state.bidHistory.pop();
+      }
+
+      io.to(roomPath).emit('auction_update', state.currentAuction);
+      io.to(roomPath).emit('new_bid', newBidEntry);
+    });
+
+    socket.on('update_auction', (data: { roomId: string; auction: any }) => {
+      const roomPath = data.roomId.toLowerCase().replace(' ', '');
+      if (roomsState[roomPath]) {
+        roomsState[roomPath].currentAuction = data.auction;
+        roomsState[roomPath].bidHistory = [];
+        roomsState[roomPath].liveChat = [];
+        io.to(roomPath).emit('auction_update', data.auction);
+        io.to(roomPath).emit('clear_history');
+        io.to(roomPath).emit('new_message', {
+          id: 'system-' + Date.now(),
+          userId: 'system',
+          userName: 'SYSTEM',
+          text: 'Auction updated. Chat and bid history cleared.',
+          timestamp: Date.now()
+        });
+        
+        // Broadcast rooms status update to all clients
+        broadcastRoomsStatus();
+      }
+    });
+
+    socket.on('reset_bids', (roomId: string) => {
+      const roomPath = roomId.toLowerCase().replace(' ', '');
+      if (roomsState[roomPath]) {
+        roomsState[roomPath].bidHistory = [];
+        io.to(roomPath).emit('clear_history');
+      }
+    });
+
+    socket.on('clear_chat', (roomId: string) => {
+      const roomPath = roomId.toLowerCase().replace(' ', '');
+      if (roomsState[roomPath]) {
+        roomsState[roomPath].liveChat = [];
+        io.to(roomPath).emit('initial_state', roomsState[roomPath]);
+      }
+    });
+
+    socket.on('archive_auction', (data: { roomId: string; archive: any }) => {
+      const roomPath = data.roomId.toLowerCase().replace(' ', '');
+      if (roomsState[roomPath]) {
+        roomsState[roomPath].currentAuction = null;
+        roomsState[roomPath].bidHistory = [];
+      }
+      // This event is mainly to notify clients to refresh their archives
+      // The actual Firestore write happens on the client (admin)
+      io.emit('auction_archived', data.archive);
+      broadcastRoomsStatus();
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.log(`[Socket.io] Socket ${socket.id} disconnected. Reason: ${reason}`);
+      connectedUsers.delete(socket.id);
+      broadcastOnlineCount();
+    });
+  });
+
+  function broadcastRoomsStatus() {
+    const status: Record<string, string | null> = {};
+    Object.keys(roomsState).forEach(roomKey => {
+      const auction = roomsState[roomKey].currentAuction;
+      status[roomKey] = (auction && !auction.isSold) ? auction.name : null;
+    });
+    io.emit('rooms_status', status);
+  }
+
+  // Supabase API endpoints
+  app.get('/api/todos', async (req, res) => {
+    try {
+      const supabase = createClient(req, res);
+      const { data, error } = await supabase.from('todos').select();
+      
+      if (error) throw error;
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
+  });
 
-    const optimized = await processStickerBuffer(buffer, isAnimated);
-    
-    res.setHeader("Content-Type", "image/webp");
-    res.send(optimized);
-  } catch (error: any) {
-    console.error("Processing Error:", error);
-    res.status(500).json({ error: "Failed to process sticker" });
-  }
-});
+  // OAuth Callback for Popups
+  app.get(['/auth/callback', '/auth/callback/'], (req, res) => {
+    res.send(`
+      <html>
+        <head>
+          <title>Authenticating...</title>
+        </head>
+        <body>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
+              window.close();
+            } else {
+              window.location.href = '/';
+            }
+          </script>
+          <div style="display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; background: #0a0a2e; color: white;">
+            <p>Authentication successful. This window should close automatically.</p>
+          </div>
+        </body>
+      </html>
+    `);
+  });
 
-app.post("/api/sticker/bundle", async (req, res) => {
-  const { title, author, stickers, isAnimatedPack } = req.body;
-  try {
-    const bundle = {
-      identifier: `pack_${Date.now()}`,
-      name: title,
-      publisher: author,
-      tray_image: stickers[0]?.data,
-      is_animated_pack: isAnimatedPack || false,
-      stickers: stickers.map((s: any) => ({
-        image_data: s.data,
-        emojis: s.emojis || ["✨"]
-      }))
-    };
-    res.json(bundle);
-  } catch (error) {
-    res.status(500).json({ error: "Failed to create bundle" });
-  }
-});
-
-app.post("/api/telegram/pack", async (req, res) => {
-  if (!TELEGRAM_BOT_TOKEN) return res.status(500).json({ error: "No token" });
-  let { packName } = req.body;
-  
-  // Resolve pack name from link if necessary
-  if (packName.includes('t.me/addstickers/')) {
-    packName = packName.split('t.me/addstickers/')[1].split('/')[0].split('?')[0];
-  }
-
-  try {
-    const response = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getStickerSet`, {
-      params: { name: packName }
+  // Vite middleware for development
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
     });
-    if (!response.data.ok) return res.status(400).json({ error: response.data.description });
-    res.json(response.data.result);
-  } catch (error: any) {
-    res.status(500).json({ error: "Failed to fetch from Telegram." });
-  }
-});
-
-app.get("/api/telegram/file", async (req, res) => {
-  if (!TELEGRAM_BOT_TOKEN) return res.status(500).json({ error: "Token missing" });
-  const { fileId } = req.query;
-  try {
-    const info = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile`, {
-      params: { file_id: fileId }
-    });
-    const url = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${info.data.result.file_path}`;
-    const fileResponse = await axios({ url, method: "GET", responseType: "arraybuffer" });
-    
-    // Check extension for animation detection
-    const isAnimated = info.data.result.file_path.endsWith('.tgs') || info.data.result.file_path.endsWith('.webm');
-    
-    res.setHeader("Content-Type", isAnimated ? "application/x-tgsticker" : "image/webp");
-    res.send(Buffer.from(fileResponse.data));
-  } catch (error) {
-    res.status(500).json({ error: "Proxy failed" });
-  }
-});
-
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get("*", (req, res) => res.sendFile(path.join(distPath, "index.html")));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
   }
-  app.listen(PORT, "0.0.0.0", () => console.log(`Server running on port ${PORT}`));
+
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
 }
 
 startServer();

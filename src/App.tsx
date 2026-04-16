@@ -1,715 +1,2097 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { 
-  Upload, 
-  Plus, 
-  Trash2, 
-  Download, 
-  Link as LinkIcon, 
-  AlertCircle, 
-  Layers, 
-  Check, 
-  ChevronRight, 
-  Info,
-  GripHorizontal,
-  Play
-} from 'lucide-react';
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import JSZip from 'jszip';
-import axios from 'axios';
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-} from '@dnd-kit/core';
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  rectSortingStrategy,
-  useSortable,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import { Sticker, PackMetadata } from './types.ts';
+import { TrainerCollection } from './components/TrainerCollection';
+import { Toaster, toast } from 'sonner';
+import { DreddBotzLogo } from './components/Logo';
+import { Skeleton } from './components/Skeleton';
+import { AuctionHeader } from './components/AuctionHeader';
+import { PokemonCard } from './components/PokemonCard';
+import { BiddingSection } from './components/BiddingSection';
+import { BidHistory } from './components/BidHistory';
+import { Leaderboard } from './components/Leaderboard';
+import { AdminPanel } from './components/AdminPanel';
+import { ProfileModal } from './components/ProfileModal';
+import { BINConfirmModal } from './components/BINConfirmModal';
+import { LiveChat } from './components/LiveChat';
+import { TradingFloor } from './components/TradingFloor';
+import { AuctionArchives } from './components/AuctionArchives';
+import { SideMenu } from './components/SideMenu';
+import SupabaseTodos from './components/SupabaseTodos';
+import { LayoutGrid, Volume2, VolumeX } from 'lucide-react';
+import { io, Socket } from 'socket.io-client';
+import confetti from 'canvas-confetti';
+import { User } from '@supabase/supabase-js';
 
-const MAX_PER_PACK = 30;
+// Import initialized Supabase service
+import { supabase, handleSupabaseError, OperationType, isSupabaseConfigured } from './supabase';
 
-// Sortable Item Component
-const SortableSticker = ({ 
-  sticker, 
-  index, 
-  onRemove,
-}: { 
-  sticker: Sticker; 
-  index: number; 
-  onRemove: (id: string) => void;
-  key?: React.Key;
-}) => {
-  const [isHovered, setIsHovered] = useState(false);
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging
-  } = useSortable({ id: sticker.id });
+interface NotificationSettings {
+  endingSoon: boolean;
+  outbid: boolean;
+  auctionWon: boolean;
+}
 
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    zIndex: isDragging ? 50 : (isHovered ? 60 : 1),
+interface SoundSettings {
+  bids: boolean;
+  outbids: boolean;
+  sales: boolean;
+  countdown: boolean;
+}
+
+interface UserProfile {
+  uid: string;
+  displayName: string;
+  avatarUrl: string;
+  winCount: number;
+  lossCount: number;
+  whatsappName: string;
+  notifications?: NotificationSettings;
+  sounds?: SoundSettings;
+  level?: number;
+  xp?: number;
+  totalSpent?: number;
+  tradesCompleted?: number;
+  badges?: string[];
+  watchlist?: string[];
+}
+
+interface AuctionData {
+  name: string;
+  level: string;
+  hp: string;
+  atk: string;
+  def: string;
+  spd: string;
+  moves: string;
+  gmaxFactor: string;
+  currentPrice: number | string;
+  binPrice: number | string;
+  endTime: number;
+  winner: string;
+  winnerUid?: string;
+  isSold: boolean;
+  imageUrl?: string;
+  duration: number | string;
+}
+
+interface BidEntry {
+  id: string;
+  bidder: string;
+  amount: number;
+  timestamp: number;
+  uid: string;
+  avatar?: string;
+}
+
+export default function App() {
+  const [auction, setAuction] = useState<AuctionData>({
+    name: 'Awaiting Signal...',
+    level: '',
+    hp: '',
+    atk: '',
+    def: '',
+    spd: '',
+    moves: 'None',
+    gmaxFactor: 'No',
+    currentPrice: '',
+    binPrice: '',
+    endTime: 0,
+    winner: 'None',
+    isSold: false
+  });
+  const isAuctionActive = auction.name !== 'Awaiting Signal...' && auction.name !== 'Loading...';
+  
+  const [timeLeft, setTimeLeft] = useState('00:00:00');
+  
+  let auctionStatus = 'Waiting';
+  if (isAuctionActive) {
+    if (auction.isSold) {
+      auctionStatus = 'Sold';
+    } else if (timeLeft === '00:00:00') {
+      auctionStatus = 'Ended';
+    } else {
+      auctionStatus = 'Live';
+    }
+  }
+
+  const [bidHistory, setBidHistory] = useState<BidEntry[]>([]);
+  const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [isAuthorized, setIsAuthorized] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [activeView, setActiveView] = useState<'auction' | 'trading' | 'collection' | 'archives' | 'leaderboard'>('auction');
+  const [roomsStatus, setRoomsStatus] = useState<Record<string, string | null>>({});
+  const [parserText, setParserText] = useState('');
+  const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
+  const [isBINConfirmOpen, setIsBINConfirmOpen] = useState(false);
+  const [bidAmount, setBidAmount] = useState('');
+  const [isBidding, setIsBidding] = useState(false);
+  const [bidError, setBidError] = useState<string | null>(null);
+  const [isSoundEnabled, setIsSoundEnabled] = useState(true);
+  const [activeRoomId, setActiveRoomId] = useState('Room 1');
+  const [onlineCount, setOnlineCount] = useState(0);
+  
+  useEffect(() => {
+    // Handle OAuth popup callback
+    if (window.opener && (window.location.hash || window.location.search)) {
+      console.log('Popup detected OAuth callback, waiting for session...');
+      
+      // Check immediately
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) {
+          console.log('Session found immediately in popup, notifying opener');
+          window.opener.postMessage({ 
+            type: 'OAUTH_AUTH_SUCCESS',
+            session: {
+              access_token: session.access_token,
+              refresh_token: session.refresh_token
+            }
+          }, '*');
+          setTimeout(() => window.close(), 100);
+        }
+      });
+
+      // Also listen for changes in case it takes a moment to process the URL
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+        if (session) {
+          console.log('Session found via auth change in popup, notifying opener');
+          window.opener.postMessage({ 
+            type: 'OAUTH_AUTH_SUCCESS',
+            session: {
+              access_token: session.access_token,
+              refresh_token: session.refresh_token
+            }
+          }, '*');
+          setTimeout(() => window.close(), 100);
+        }
+      });
+
+      // Fallback: if nothing happens after 3 seconds, just close it and let the main window try
+      const timeout = setTimeout(() => {
+        console.log('Timeout waiting for session in popup, notifying opener anyway');
+        window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
+        window.close();
+      }, 3000);
+
+      return () => {
+        subscription.unsubscribe();
+        clearTimeout(timeout);
+      };
+    }
+  }, []);
+
+  useEffect(() => {
+    console.log('Online count state updated:', onlineCount);
+  }, [onlineCount]);
+  const rooms = ['Room 1', 'Room 2', 'Room 3'];
+  const socketRef = useRef<Socket | null>(null);
+
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [isEndingSoon, setIsEndingSoon] = useState(false);
+  const [isFinalCountdown, setIsFinalCountdown] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const userRef = useRef(user);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [userBids, setUserBids] = useState<any[]>([]);
+  const [leaderboard, setLeaderboard] = useState<UserProfile[]>([]);
+  const processedAuctionRef = useRef<string | null>(null);
+  const hasPlayedSound = useRef(false);
+  const hasNotifiedEndingSoon = useRef(false);
+  const hasNotifiedGlobalEnd = useRef<string | null>(null);
+
+  // Audio Refs
+  const bidSound = useRef<HTMLAudioElement | null>(null);
+  const outbidSound = useRef<HTMLAudioElement | null>(null);
+  const soldSound = useRef<HTMLAudioElement | null>(null);
+  const warningSound = useRef<HTMLAudioElement | null>(null);
+  const tickingSound = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    bidSound.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3');
+    outbidSound.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2572/2572-preview.mp3');
+    soldSound.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2573/2573-preview.mp3');
+    warningSound.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2574/2574-preview.mp3');
+    tickingSound.current = new Audio('https://www.myinstants.com/media/sounds/clock-ticking-2.mp3');
+    if (tickingSound.current) tickingSound.current.loop = true;
+  }, []);
+
+  const playSound = (sound: React.RefObject<HTMLAudioElement | null>, type?: keyof SoundSettings) => {
+    if (!isSoundEnabled || !sound.current) return;
+    
+    // Check individual sound preferences if user is logged in
+    if (profile?.sounds && type) {
+      if (profile.sounds[type] === false) return;
+    }
+
+    sound.current.currentTime = 0;
+    sound.current.play().catch(() => {});
+  };
+
+  // Supabase Realtime Listeners (Vercel Compatible)
+  useEffect(() => {
+    const roomPath = activeRoomId.toLowerCase().replace(' ', '');
+    
+    const fetchInitialData = async () => {
+      const roomPath = activeRoomId.toLowerCase().replace(' ', '');
+      
+      // Fetch current auction from rooms table
+      const { data: roomData } = await supabase
+        .from('rooms')
+        .select('current_auction')
+        .eq('id', roomPath)
+        .single();
+      
+      if (roomData?.current_auction) {
+        setAuction(roomData.current_auction);
+      } else {
+        setAuction({
+          name: 'Awaiting Signal...',
+          level: '',
+          hp: '',
+          atk: '',
+          def: '',
+          spd: '',
+          moves: 'None',
+          gmaxFactor: 'No',
+          currentPrice: '',
+          binPrice: '',
+          endTime: 0,
+          winner: 'None',
+          isSold: false
+        });
+      }
+
+      // Fetch bid history from bid_history table
+      const { data: bidsData } = await supabase
+        .from('bid_history')
+        .select('*')
+        .eq('room_id', roomPath)
+        .order('timestamp', { ascending: false })
+        .limit(50);
+      
+      setBidHistory(bidsData || []);
+
+      // Fetch rooms status
+      const { data: statusData } = await supabase
+        .from('rooms')
+        .select('id, status');
+      
+      if (statusData) {
+        const statusMap: Record<string, string | null> = {};
+        statusData.forEach(s => statusMap[s.id] = s.status);
+        setRoomsStatus(statusMap);
+      }
+    };
+
+    fetchInitialData();
+
+    const channel = supabase
+      .channel(`room_${roomPath}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms', filter: `id=eq.${roomPath}` }, () => {
+        fetchInitialData();
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bid_history', filter: `room_id=eq.${roomPath}` }, () => {
+        fetchInitialData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, () => {
+        fetchInitialData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [activeRoomId]);
+
+  // Socket.io is kept for local dev/preview, but core features are now handled by Supabase Realtime for Vercel compatibility
+  useEffect(() => {
+    const socket = io(window.location.origin, {
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      transports: ['websocket', 'polling']
+    });
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      console.log('[Socket.io] Connected to server:', socket.id);
+      socket.emit('join_room', activeRoomId);
+      if (userRef.current) {
+        socket.emit('user_connected', userRef.current.id);
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
+
+  // Timer & Sound Logic
+  useEffect(() => {
+    // Global Error Listeners
+    const handleGlobalError = (event: ErrorEvent) => {
+      console.error('Global Error:', event.error);
+      // Let ErrorBoundary handle fatal errors, but toast non-fatal ones
+      if (event.error?.message?.includes('network') || event.error?.message?.includes('Supabase')) {
+        toast.error('Connection Issue', { description: 'A network or database error occurred. Retrying...' });
+      }
+    };
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      event.preventDefault(); // Prevent default browser logging
+      const reason = event.reason;
+      let message = 'An unexpected error occurred.';
+      
+      if (reason instanceof Error) {
+        message = reason.message;
+        try {
+          // Check if it's a JSON string from handleSupabaseError
+          const errInfo = JSON.parse(reason.message);
+          if (errInfo.error) {
+            message = errInfo.error;
+          }
+        } catch (e) {
+          // Not JSON, use message as is
+        }
+      } else if (typeof reason === 'string' && reason.trim() !== '') {
+        message = reason;
+      } else if (reason && typeof reason === 'object' && reason.message) {
+        message = reason.message;
+      }
+
+      if (message.toLowerCase().includes('permission')) {
+        toast.error('Access Denied', { description: 'You do not have permission to perform this action.' });
+      } else {
+        // Only toast if it's not a common/expected error
+        if (!message.includes('popup-closed-by-user') && !message.includes('cancelled-popup-request') && message !== 'An unexpected error occurred.') {
+          toast.error('Application Error', { description: message });
+        }
+      }
+    };
+
+    window.addEventListener('error', handleGlobalError);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+
+    return () => {
+      window.removeEventListener('error', handleGlobalError);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    };
+  }, []);
+
+  // Auth State Listener
+  useEffect(() => {
+    if (socketRef.current && socketRef.current.connected) {
+      if (user) {
+        console.log('[Socket.io] User logged in, emitting user_connected:', user.id);
+        socketRef.current.emit('user_connected', user.id);
+        socketRef.current.emit('request_online_count');
+      } else {
+        console.log('[Socket.io] User logged out, emitting user_disconnected');
+        socketRef.current.emit('user_disconnected');
+        socketRef.current.emit('request_online_count');
+      }
+    }
+  }, [user]);
+
+  // Supabase Auth State Listener
+  useEffect(() => {
+    // Explicitly check session on mount to handle OAuth redirects reliably
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        console.error('Error getting session on mount:', error);
+        // If refresh token is invalid, sign out to clear local state
+        if (error.message.includes('Refresh Token Not Found') || error.message.includes('Invalid Refresh Token')) {
+          supabase.auth.signOut().catch(console.error);
+        }
+      }
+      const currentUser = session?.user || null;
+      setUser(currentUser as any);
+      setIsAuthLoading(false);
+      
+      if (currentUser) {
+        fetchProfile(currentUser.id).catch(err => {
+          console.error('Initial profile fetch failed:', err);
+        });
+        fetchUserBids(currentUser.id).catch(err => {
+          console.error('Initial user bids fetch failed:', err);
+        });
+      }
+    }).catch(err => {
+      console.error('Unexpected error during getSession:', err);
+      setIsAuthLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setProfile(null);
+        setUserBids([]);
+        return;
+      }
+      
+      const currentUser = session?.user || null;
+      setUser(currentUser as any);
+      setIsAuthLoading(false);
+      
+      if (currentUser) {
+        fetchProfile(currentUser.id).catch(err => {
+          console.error('Profile fetch failed on auth change:', err);
+        });
+        fetchUserBids(currentUser.id).catch(err => {
+          console.error('User bids fetch failed on auth change:', err);
+        });
+      } else {
+        setProfile(null);
+        setUserBids([]);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  // Leaderboard Listener
+  useEffect(() => {
+    const fetchLeaderboard = async () => {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .order('winCount', { ascending: false })
+        .limit(10);
+      
+      if (error) {
+        // Only log error if it's not a permission error for guests
+        if (error.code !== '42501') {
+          console.error('Error fetching leaderboard:', error);
+        }
+        return;
+      }
+      
+      if (data) {
+        setLeaderboard(data.map(d => ({ uid: d.id, ...d })) as UserProfile[]);
+      }
+    };
+
+    fetchLeaderboard();
+    
+    const channel = supabase
+      .channel('leaderboard_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => {
+        fetchLeaderboard();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const fetchProfile = async (uid: string) => {
+    const path = `users/${uid}`;
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', uid)
+        .single();
+
+      if (data) {
+        setProfile({ uid, ...data } as UserProfile);
+      } else if (error && error.code === 'PGRST116') {
+        // Create initial profile
+        const newProfile = {
+          id: uid,
+          displayName: user?.user_metadata?.full_name || 'DreddBotz Trainer',
+          avatarUrl: user?.user_metadata?.avatar_url || '',
+          winCount: 0,
+          lossCount: 0,
+          whatsappName: '',
+          notifications: {
+            endingSoon: true,
+            outbid: true,
+            auctionWon: true
+          }
+        };
+        const { error: insertError } = await supabase.from('users').insert([newProfile]);
+        if (insertError) throw insertError;
+        setProfile({ uid, ...newProfile } as any);
+      } else if (error) {
+        throw error;
+      }
+    } catch (error) {
+      handleSupabaseError(error, OperationType.GET, path);
+    }
+  };
+
+  // User Bids Listener
+  useEffect(() => {
+    if (!user) return;
+    
+    const channel = supabase
+      .channel(`user_bids_${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_bids', filter: `userId=eq.${user.id}` }, () => {
+        fetchUserBids(user.id).catch(console.error);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
+
+  const fetchUserBids = async (uid: string) => {
+    const path = `user_bids`;
+    try {
+      const { data, error } = await supabase
+        .from('user_bids')
+        .select('*')
+        .eq('userId', uid)
+        .order('timestamp', { ascending: false });
+
+      if (error) throw error;
+      setUserBids(data);
+    } catch (error) {
+      handleSupabaseError(error, OperationType.LIST, path);
+    }
+  };
+
+  useEffect(() => {
+    const handleMessage = async (event: MessageEvent) => {
+      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+        console.log('OAuth login successful from popup');
+        
+        // If the popup sent us the session data directly, use it
+        if (event.data.session) {
+          console.log('Received session directly from popup message:', event.data.session);
+          try {
+            const { data, error } = await supabase.auth.setSession(event.data.session);
+            if (error) {
+              console.error('Error setting session from popup message:', error);
+            } else if (data.session) {
+              console.log('Session successfully set from popup message');
+              const currentUser = data.session.user;
+              setUser(currentUser as any);
+              setIsAuthLoading(false);
+              fetchProfile(currentUser.id).catch(console.error);
+              fetchUserBids(currentUser.id).catch(console.error);
+              toast.success('Logged in successfully');
+              return;
+            }
+          } catch (err) {
+            console.error('Unexpected error during setSession:', err);
+          }
+        }
+
+        // Force a session refresh to pick up the new session from localStorage
+        // Add more retries and longer delays to ensure localStorage is synced across windows
+        let retries = 10;
+        const checkSession = async () => {
+          try {
+            const { data: { session }, error } = await supabase.auth.getSession();
+            if (error) {
+              console.error('Error getting session after popup:', error);
+              if (error.message.includes('Refresh Token Not Found') || error.message.includes('Invalid Refresh Token')) {
+                supabase.auth.signOut().catch(console.error);
+              }
+            }
+            if (session) {
+              const currentUser = session.user;
+              setUser(currentUser as any);
+              setIsAuthLoading(false);
+              fetchProfile(currentUser.id).catch(console.error);
+              fetchUserBids(currentUser.id).catch(console.error);
+              toast.success('Logged in successfully');
+            } else if (retries > 0) {
+              retries--;
+              console.log(`Session not found yet, retrying... (${retries} left)`);
+              // Exponential backoff or just consistent polling
+              setTimeout(checkSession, 500);
+            } else {
+              console.error('Failed to get session after multiple retries.');
+              toast.error('Login failed to sync. Please refresh the page.');
+            }
+          } catch (err) {
+            console.error('Unexpected error in handleMessage getSession:', err);
+          }
+        };
+        
+        // Start checking after a short delay
+        setTimeout(checkSession, 300);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  const handleLogin = async () => {
+    if (!isSupabaseConfigured) {
+      toast.error('Supabase Not Configured', {
+        description: 'Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment variables.'
+      });
+      return;
+    }
+
+    if (!navigator.onLine) {
+      toast.error('Network Error', {
+        description: 'Please check your internet connection and try again.'
+      });
+      return;
+    }
+
+    try {
+      const isIframe = window.self !== window.top;
+      // Use origin with trailing slash to match Supabase wildcard config (e.g. https://domain.com/*)
+      const redirectUrl = `${window.location.origin}/`;
+      console.log('Initiating login with redirectUrl:', redirectUrl);
+
+      if (!isIframe) {
+        // Standard redirect flow for Vercel/standalone
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: redirectUrl,
+            queryParams: {
+              prompt: 'select_account',
+            },
+          }
+        });
+        if (error) throw error;
+        return;
+      }
+
+      // Popup flow for iframe (AI Studio)
+      const width = 600;
+      const height = 700;
+      const left = window.screenX + (window.outerWidth - width) / 2;
+      const top = window.screenY + (window.outerHeight - height) / 2;
+      
+      // Open popup BEFORE await to prevent popup blockers on Safari/Mobile
+      let authWindow = window.open(
+        '',
+        'supabase_oauth_popup',
+        `width=${width},height=${height},left=${left},top=${top}`
+      );
+      
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectUrl,
+          skipBrowserRedirect: true,
+          queryParams: {
+            prompt: 'select_account',
+          },
+        }
+      });
+      
+      if (error) {
+        if (authWindow) authWindow.close();
+        throw error;
+      }
+      
+      if (data?.url) {
+        if (authWindow) {
+          authWindow.location.href = data.url;
+        } else {
+          // Fallback for mobile/Safari where the initial popup was blocked
+          // We create a temporary link and simulate a click, or show a toast with an action
+          toast('Popup Blocked', {
+            description: 'Please click here to open the login window.',
+            action: {
+              label: 'Login',
+              onClick: () => {
+                authWindow = window.open(data.url, 'supabase_oauth_popup', `width=${width},height=${height},left=${left},top=${top}`);
+                startPolling(authWindow);
+              }
+            },
+            duration: 10000,
+          });
+          return; // Exit early, polling will be started by the toast action
+        }
+        
+        startPolling(authWindow);
+      } else if (authWindow) {
+        authWindow.close();
+      }
+      
+      function startPolling(win: Window | null) {
+        if (!win) return;
+        // Fallback: poll to see if the popup was closed manually or finished
+        const pollTimer = setInterval(async () => {
+          if (win.closed) {
+            clearInterval(pollTimer);
+            console.log('Popup closed, checking session as fallback...');
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session) {
+              const currentUser = session.user;
+              setUser(currentUser as any);
+              setIsAuthLoading(false);
+              fetchProfile(currentUser.id).catch(console.error);
+              fetchUserBids(currentUser.id).catch(console.error);
+            }
+          }
+        }, 500);
+      }
+    } catch (error: any) {
+      console.error('Login Error:', error);
+      toast.error('Login failed', {
+        description: error.message || 'Please try again.'
+      });
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      toast.success('Logged out successfully!');
+    } catch (error) {
+      toast.error('Logout failed.');
+    }
+  };
+
+  const updateProfile = async (updates: Partial<UserProfile>) => {
+    if (!user) return;
+    if (!navigator.onLine) {
+      toast.error('Network Error', { description: 'Cannot update profile while offline.' });
+      return;
+    }
+    const path = `users/${user.id}`;
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update(updates)
+        .eq('id', user.id);
+      
+      if (error) throw error;
+      setProfile(prev => prev ? { ...prev, ...updates } : null);
+      toast.success('Profile updated!');
+    } catch (error: any) {
+      handleSupabaseError(error, OperationType.UPDATE, path);
+    }
+  };
+
+  const handleUploadAvatar = async (file: File) => {
+    if (!user) return;
+    
+    // Basic validation
+    if (!file.type.startsWith('image/')) {
+      toast.error('Invalid file type', { description: 'Please upload an image file.' });
+      return;
+    }
+    
+    if (file.size > 2 * 1024 * 1024) { // 2MB limit
+      toast.error('File too large', { description: 'Please upload an image smaller than 2MB.' });
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${user.id}/${Date.now()}.${fileExt}`;
+      const { data, error } = await supabase.storage
+        .from('avatars')
+        .upload(fileName, file);
+
+      if (error) throw error;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(fileName);
+
+      await updateProfile({ avatarUrl: publicUrl });
+      toast.success('Avatar Uploaded', { description: 'Your new profile picture is live!' });
+    } catch (error: any) {
+      console.error('Upload Error:', error);
+      toast.error('Upload Failed', { description: error.message || 'Could not upload your avatar.' });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+  
+  // Admin Form State
+  const [form, setForm] = useState<AuctionData>({
+    name: '',
+    level: '',
+    hp: '',
+    atk: '',
+    def: '',
+    spd: '',
+    moves: '',
+    gmaxFactor: 'No',
+    currentPrice: '',
+    binPrice: '',
+    endTime: 0,
+    winner: 'None',
+    isSold: false,
+    duration: ''
+  });
+
+  const pokemonNameRef = useRef<HTMLInputElement>(null);
+
+  // Process Win/Loss Stats when auction ends
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOffline(false);
+      toast.success('Connection Restored', { description: 'You are back online.' });
+    };
+    const handleOffline = () => {
+      setIsOffline(true);
+      toast.error('Connection Lost', { description: 'You are offline. Some features may be unavailable.', duration: Infinity });
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!user || !auction.isSold || !auction.name || auction.name === 'Loading...' || auction.name === 'Awaiting Signal...') return;
+    
+    // Use a combination of name and endTime as a unique key for the auction
+    const auctionKey = `${auction.name}-${auction.endTime}`;
+    if (processedAuctionRef.current === auctionKey) return;
+
+    const processStats = async () => {
+      try {
+        const { data: bids, error: bidsError } = await supabase
+          .from('user_bids')
+          .select('*')
+          .eq('userId', user.id)
+          .eq('pokemonName', auction.name)
+          .eq('status', 'active');
+        
+        if (bidsError || !bids || bids.length === 0) {
+          processedAuctionRef.current = auctionKey;
+          return;
+        }
+
+        const isWinner = user.id === auction.winnerUid;
+        
+        // Update bids status
+        const { error: updateBidsError } = await supabase
+          .from('user_bids')
+          .update({ status: isWinner ? 'won' : 'lost' })
+          .eq('userId', user.id)
+          .eq('pokemonName', auction.name)
+          .eq('status', 'active');
+
+        if (updateBidsError) throw updateBidsError;
+
+        // Update user stats
+        const { data: profileData, error: profileError } = await supabase
+          .from('users')
+          .select('winCount, lossCount')
+          .eq('id', user.id)
+          .single();
+
+        if (profileError) throw profileError;
+
+        const { error: updateProfileError } = await supabase
+          .from('users')
+          .update({
+            winCount: (profileData.winCount || 0) + (isWinner ? 1 : 0),
+            lossCount: (profileData.lossCount || 0) + (isWinner ? 0 : 1)
+          })
+          .eq('id', user.id);
+
+        if (updateProfileError) throw updateProfileError;
+
+        processedAuctionRef.current = auctionKey;
+      } catch (error) {
+        console.error('Error processing auction stats:', error);
+      }
+    };
+
+    processStats().catch(err => {
+      console.error('processStats failed:', err);
+    });
+  }, [auction.isSold, auction.name, auction.endTime, user?.id]);
+
+  // Supabase Presence for Online Counter
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase.channel('online_users', {
+      config: {
+        presence: {
+          key: user.id,
+        },
+      },
+    });
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        setOnlineCount(Object.keys(state).length);
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.track({
+            online_at: new Date().toISOString(),
+            displayName: user?.user_metadata?.full_name || 'Anonymous',
+          });
+        }
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
+
+  // Timer & Sound Logic
+  useEffect(() => {
+    const updateTimer = () => {
+      if (auction.isSold || !auction.endTime || auction.endTime <= 0) {
+        setTimeLeft('00:00:00');
+        setIsEndingSoon(false);
+        return;
+      }
+
+      const now = Date.now();
+      const diff = auction.endTime - now;
+
+      if (diff <= 0) {
+        setTimeLeft('00:00:00');
+        setIsEndingSoon(false);
+        setIsFinalCountdown(false);
+        if (tickingSound.current) tickingSound.current.pause();
+        
+        // Auto-sell when timer hits 0
+        if (!auction.isSold && isAuctionActive) {
+          const autoSell = async () => {
+            const roomPath = activeRoomId.toLowerCase().replace(' ', '');
+            
+            // Fetch latest auction state first
+            const { data: roomData } = await supabase
+              .from('rooms')
+              .select('current_auction')
+              .eq('id', roomPath)
+              .single();
+            
+            if (roomData?.current_auction && !roomData.current_auction.isSold) {
+              const updatedAuction = {
+                ...roomData.current_auction,
+                isSold: true
+              };
+              
+              const { error } = await supabase
+                .from('rooms')
+                .update({ current_auction: updatedAuction })
+                .eq('id', roomPath);
+              
+              if (error) console.error('Auto-sell failed:', error);
+            }
+          };
+          autoSell();
+        }
+      } else {
+        setIsEndingSoon(diff <= 300000); // 5 minutes
+        setIsFinalCountdown(diff <= 10000); // 10 seconds
+        
+        if (diff <= 10000 && !auction.isSold && isAuctionActive) {
+          const isCountdownEnabled = profile?.sounds?.countdown !== false;
+          if (tickingSound.current && tickingSound.current.paused && isSoundEnabled && isCountdownEnabled) {
+            tickingSound.current.play().catch(() => {});
+          } else if (tickingSound.current && !tickingSound.current.paused && (!isSoundEnabled || !isCountdownEnabled)) {
+            tickingSound.current.pause();
+          }
+        } else {
+          if (tickingSound.current) tickingSound.current.pause();
+        }
+
+        const h = Math.floor(diff / 3600000).toString().padStart(2, '0');
+        const m = Math.floor((diff % 3600000) / 60000).toString().padStart(2, '0');
+        const s = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0');
+        setTimeLeft(`${h}:${m}:${s}`);
+      }
+    };
+
+    // Update immediately
+    updateTimer();
+
+    const timer = setInterval(updateTimer, 1000);
+    return () => clearInterval(timer);
+  }, [auction.endTime, auction.isSold, auction.name, isAuctionActive]);
+
+  // Browser Notifications Helper
+  const sendBrowserNotification = (title: string, options?: NotificationOptions) => {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'granted') {
+      new Notification(title, {
+        icon: '/favicon.ico',
+        ...options
+      });
+    }
+  };
+
+  // Handle Ending Soon Notification
+  useEffect(() => {
+    if (isEndingSoon && !hasNotifiedEndingSoon.current && !auction.isSold && auction.name !== 'Loading...') {
+      if (profile?.notifications?.endingSoon !== false) {
+        toast.warning('Auction Ending Soon!', {
+          description: 'Less than 5 minutes remaining. Place your final bids now!',
+          duration: 10000,
+        });
+        playSound(warningSound);
+        sendBrowserNotification('Auction Ending Soon!', {
+          body: `Less than 5 minutes remaining for ${auction.name}. Place your final bids now!`,
+          tag: 'ending-soon'
+        });
+      }
+      hasNotifiedEndingSoon.current = true;
+    }
+    if (!isEndingSoon) {
+      hasNotifiedEndingSoon.current = false;
+    }
+  }, [isEndingSoon, auction.isSold, auction.name, profile?.notifications?.endingSoon]);
+
+  // Global Auction End Notification
+  useEffect(() => {
+    if (auction.isSold && auction.name && auction.name !== 'Loading...' && auction.name !== 'Awaiting Signal...') {
+      const auctionKey = `${auction.name}-${auction.endTime}`;
+      if (hasNotifiedGlobalEnd.current !== auctionKey) {
+        hasNotifiedGlobalEnd.current = auctionKey;
+
+        const isWinner = user && auction.winnerUid === user.id;
+        const priceStr = typeof auction.currentPrice === 'number' ? auction.currentPrice.toLocaleString() : auction.currentPrice;
+        
+        playSound(soldSound, 'sales');
+
+        if (isWinner) {
+          if (profile?.notifications?.auctionWon !== false) {
+            toast.success('🎉 Auction Won!', {
+              description: `You won the ${auction.name} auction for 🪙${priceStr}!`,
+              duration: 30000,
+              action: { label: 'Dismiss', onClick: () => {} }
+            });
+            sendBrowserNotification('🎉 Auction Won!', {
+              body: `You won the ${auction.name} auction for 🪙${priceStr}!`,
+              tag: 'auction-won'
+            });
+          }
+        } else {
+          const winnerName = auction.winner || 'Someone';
+          toast.info('🛑 Auction Ended', {
+            description: `${winnerName} won ${auction.name} for 🪙${priceStr}!`,
+            duration: 30000,
+            action: { label: 'Dismiss', onClick: () => {} }
+          });
+        }
+      }
+    }
+  }, [auction.isSold, auction.name, auction.endTime, auction.winner, auction.currentPrice, auction.winnerUid, user, profile?.notifications?.auctionWon]);
+
+  // Handle Outbid Notification
+  const lastHighBidderUidRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!user || !bidHistory.length) return;
+    
+    const latestBid = bidHistory[0];
+    const latestBidderUid = latestBid.uid;
+    
+    if (lastHighBidderUidRef.current === user.id && latestBidderUid !== user.id) {
+      if (profile?.notifications?.outbid !== false) {
+        toast.error('You were Outbid!', {
+          description: `${latestBid.bidder} placed a higher bid of 🪙${latestBid.amount.toLocaleString()}!`,
+          duration: 10000,
+        });
+        playSound(outbidSound, 'outbids');
+        sendBrowserNotification('You were Outbid!', {
+          body: `${latestBid.bidder} placed a higher bid of 🪙${latestBid.amount.toLocaleString()}!`,
+          tag: 'outbid'
+        });
+      }
+    }
+    lastHighBidderUidRef.current = latestBidderUid;
+  }, [bidHistory, user, profile?.notifications?.outbid]);
+
+  // Handle Sounds
+  useEffect(() => {
+    if (auction.isSold && !hasPlayedSound.current) {
+      const isWinner = user && auction.winnerUid === user.id;
+      const soundUrl = isWinner 
+        ? 'https://www.myinstants.com/media/sounds/victory-mario-series-hq.mp3'
+        : 'https://www.myinstants.com/media/sounds/gavel-knock.mp3';
+      
+      const audio = new Audio(soundUrl);
+      audio.play().catch(e => console.error('Audio play failed:', e));
+      hasPlayedSound.current = true;
+    }
+    if (!auction.isSold) {
+      hasPlayedSound.current = false;
+    }
+  }, [auction.isSold, auction.winner, user, auction.winnerUid]);
+
+  // Listen to currentAuction (Moved to WebSockets)
+  // Listen to bidHistory (Moved to WebSockets)
+
+  const [pokemonImageUrl, setPokemonImageUrl] = useState<string>('');
+  const [isImageLoading, setIsImageLoading] = useState(false);
+
+  // Fetch Pokémon Image from PokéAPI or use custom imageUrl
+  useEffect(() => {
+    if (auction.imageUrl) {
+      setPokemonImageUrl(auction.imageUrl);
+      setIsImageLoading(false);
+      return;
+    }
+
+    if (auction.name && auction.name !== 'Loading...' && auction.name !== 'Awaiting Signal...') {
+      setIsImageLoading(true);
+      const fetchPokemon = async () => {
+        try {
+          const name = auction.name.toLowerCase()
+            .replace('♀', '-f')
+            .replace('♂', '-m')
+            .replace(/\./g, '')
+            .replace(/'/g, '')
+            .replace(/\s+/g, '-')
+            .replace(/[^a-z0-9-]/g, '')
+            .trim();
+          
+          const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${name}`);
+          if (response.ok) {
+            const data = await response.json();
+            setPokemonImageUrl(data.sprites.other['official-artwork'].front_default || 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png');
+          } else {
+            // Try a secondary source if PokéAPI fails (e.g. for newer Pokemon or different naming)
+            setPokemonImageUrl(`https://img.pokemondb.net/artwork/large/${name}.jpg`);
+          }
+        } catch (error) {
+          setPokemonImageUrl('https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png'); 
+        } finally {
+          setIsImageLoading(false);
+        }
+      };
+      fetchPokemon();
+    } else {
+      setPokemonImageUrl('');
+      setIsImageLoading(false);
+    }
+  }, [auction.name, auction.imageUrl]);
+
+  const handlePlaceBid = async () => {
+    setBidError(null);
+
+    if (!user) {
+      setBidError('Please log in to place a bid');
+      toast.error('Authentication Required', {
+        description: 'Please log in to place a bid.'
+      });
+      return;
+    }
+
+    if (!navigator.onLine) {
+      setBidError('No internet connection');
+      toast.error('Network Error', {
+        description: 'Please check your internet connection and try again.'
+      });
+      return;
+    }
+
+    if (auction.isSold) {
+      setBidError('Auction has already ended');
+      toast.error('Auction Ended', {
+        description: 'This Pokémon has already been sold.'
+      });
+      return;
+    }
+
+    if (!bidAmount) {
+      setBidError('Please enter a bid amount');
+      return;
+    }
+
+    const amount = parseInt(bidAmount);
+    const currentPrice = typeof auction.currentPrice === 'number' ? auction.currentPrice : 0;
+    const binPrice = typeof auction.binPrice === 'number' ? auction.binPrice : 0;
+    const minIncrement = 1000000;
+
+    if (isNaN(amount) || amount <= 0) {
+      setBidError('Please enter a valid positive number');
+      setBidAmount('');
+      return;
+    }
+
+    if (amount < currentPrice + minIncrement) {
+      setBidError(`Bid must be at least 🪙${(currentPrice + minIncrement).toLocaleString()} (Min. increment 1M)`);
+      setBidAmount('');
+      toast.error('Invalid Bid', {
+        description: `Bids must be at least 1,000,000 higher than the current price.`
+      });
+      return;
+    }
+
+    if (binPrice > 0 && amount >= binPrice) {
+      setBidError(`Bid is equal to or higher than BIN price. Use the Buy It Now button instead.`);
+      setBidAmount('');
+      toast.error('Use Buy It Now', {
+        description: `Your bid is equal to or higher than the BIN price of 🪙${binPrice.toLocaleString()}. Please use the Buy It Now button.`
+      });
+      return;
+    }
+
+    setIsBidding(true);
+    try {
+      const bidderName = profile?.whatsappName || profile?.displayName || user.user_metadata?.full_name || 'Anonymous Trainer';
+      
+      const newBid = {
+        bidder: bidderName,
+        amount: amount,
+        uid: user.id,
+        avatar: profile?.avatarUrl || user.user_metadata?.avatar_url || '',
+        timestamp: Date.now()
+      };
+
+      const roomPath = activeRoomId.toLowerCase().replace(' ', '');
+      
+      // Update current auction in Supabase
+      const { data: auctionData, error: auctionError } = await supabase
+        .from('rooms')
+        .select('current_auction')
+        .eq('id', roomPath)
+        .single();
+      
+      if (auctionError) throw auctionError;
+      
+      const currentAuction = auctionData.current_auction;
+      if (currentAuction.isSold) throw new Error('Auction already sold');
+      if (amount < (currentAuction.currentPrice || 0) + 1000000) throw new Error('Bid too low');
+
+      const updatedAuction = {
+        ...currentAuction,
+        currentPrice: amount,
+        winner: bidderName,
+        winnerUid: user.id
+      };
+
+      const { error: updateError } = await supabase
+        .from('rooms')
+        .update({ current_auction: updatedAuction })
+        .eq('id', roomPath);
+      
+      if (updateError) throw updateError;
+
+      // Add to bid history in Supabase
+      const { error: bidHistoryError } = await supabase
+        .from('bid_history')
+        .insert([{
+          room_id: roomPath,
+          bidder: bidderName,
+          amount: amount,
+          uid: user.id,
+          avatar: profile?.avatarUrl || user.user_metadata?.avatar_url || '',
+          timestamp: Date.now()
+        }]);
+      
+      if (bidHistoryError) throw bidHistoryError;
+
+      // Update User Bid History (for persistence)
+      const { error: userBidError } = await supabase
+        .from('user_bids')
+        .insert([{
+          userId: user.id,
+          bidderName: bidderName,
+          amount: amount,
+          timestamp: Date.now(),
+          pokemonName: auction.name,
+          status: 'active'
+        }]);
+      
+      if (userBidError) throw userBidError;
+
+      // Award XP for placing a bid (10 XP)
+      if (profile) {
+        const currentXp = profile.xp || 0;
+        const currentLevel = profile.level || 1;
+        const newXp = currentXp + 10;
+        const nextLevelXp = currentLevel * 1000;
+        
+        const updates: any = { xp: newXp };
+        if (newXp >= nextLevelXp) {
+          updates.level = currentLevel + 1;
+          updates.xp = newXp - nextLevelXp;
+          toast.success('Level Up!', { description: `You reached Trainer Level ${updates.level}!` });
+        }
+        
+        const { error: profileError } = await supabase
+          .from('users')
+          .update(updates)
+          .eq('id', user.id);
+        
+        if (profileError) throw profileError;
+        setProfile({ ...profile, ...updates });
+      }
+
+      // Notify via socket for real-time updates
+      socketRef.current?.emit('place_bid', { roomId: activeRoomId, bid: newBid });
+
+      setBidAmount('');
+      toast.success('Bid Placed!', {
+        description: `Successfully placed a bid of 🪙${amount.toLocaleString()} for ${auction.name}.`
+      });
+    } catch (error: any) {
+      console.error('Error placing bid:', error);
+      setBidAmount('');
+      
+      if (error.code === 'PERMISSION_DENIED' || error.status === 403) {
+        setBidError('Your account does not have permission to place this bid.');
+        handleSupabaseError(error, OperationType.WRITE, `user_bids`);
+      } else {
+        setBidError(error.message || 'An unexpected error occurred. Please try placing your bid again.');
+        toast.error('Submission Failed', { description: error.message || 'An unexpected error occurred while placing your bid. Please try again.' });
+      }
+    } finally {
+      setIsBidding(false);
+    }
+  };
+
+  const handleBuyItNow = async () => {
+    if (!user) {
+      toast.error('Authentication Required', {
+        description: 'Please log in to buy this Pokémon.'
+      });
+      return;
+    }
+
+    if (!navigator.onLine) {
+      toast.error('Network Error', {
+        description: 'Please check your internet connection.'
+      });
+      return;
+    }
+
+    if (auction.isSold) {
+      toast.error('Auction Ended', {
+        description: 'This item is already sold.'
+      });
+      return;
+    }
+
+    const binPrice = typeof auction.binPrice === 'number' ? auction.binPrice : 0;
+    if (!binPrice || binPrice <= 0) return;
+
+    setIsBINConfirmOpen(true);
+  };
+
+  const confirmBuyItNow = async () => {
+    if (!user) return;
+    const binPrice = typeof auction.binPrice === 'number' ? auction.binPrice : 0;
+    
+    setIsBidding(true);
+    setIsBINConfirmOpen(false);
+    try {
+      const bidderName = profile?.whatsappName || profile?.displayName || user.user_metadata?.full_name || 'Anonymous Trainer';
+      const roomPath = activeRoomId.toLowerCase().replace(' ', '');
+      
+      // Update current auction in Supabase
+      const { data: auctionData, error: auctionError } = await supabase
+        .from('rooms')
+        .select('current_auction')
+        .eq('id', roomPath)
+        .single();
+      
+      if (auctionError) throw auctionError;
+      
+      const currentAuction = auctionData.current_auction;
+      if (currentAuction.isSold) {
+        toast.error('Purchase Failed', { description: 'The item was already sold.' });
+        setIsBidding(false);
+        return;
+      }
+
+      const updatedAuction = {
+        ...currentAuction,
+        currentPrice: binPrice,
+        winner: bidderName,
+        winnerUid: user.id,
+        isSold: true
+      };
+
+      const { error: updateError } = await supabase
+        .from('rooms')
+        .update({ current_auction: updatedAuction })
+        .eq('id', roomPath);
+      
+      if (updateError) throw updateError;
+
+      // Add confetti for BIN purchase
+      confetti({
+        particleCount: 200,
+        spread: 100,
+        origin: { y: 0.6 },
+        colors: ['#EAB308', '#FDE047', '#FFFFFF']
+      });
+
+      const newBid = {
+        bidder: bidderName,
+        amount: binPrice,
+        timestamp: Date.now(),
+        uid: user.id,
+        isBIN: true,
+        avatar: profile?.avatarUrl || user.user_metadata?.avatar_url || ''
+      };
+
+      // Add to bid history in Supabase
+      const { error: bidHistoryError } = await supabase
+        .from('bid_history')
+        .insert([{
+          room_id: roomPath,
+          bidder: bidderName,
+          amount: binPrice,
+          uid: user.id,
+          avatar: profile?.avatarUrl || user.user_metadata?.avatar_url || '',
+          timestamp: Date.now(),
+          is_bin: true
+        }]);
+      
+      if (bidHistoryError) throw bidHistoryError;
+
+      // Update User Bid History & Stats
+      const { error: userBidError } = await supabase
+        .from('user_bids')
+        .insert([{
+          userId: user.id,
+          bidderName: bidderName,
+          amount: binPrice,
+          timestamp: Date.now(),
+          pokemonName: auction.name,
+          status: 'won'
+        }]);
+      
+      if (userBidError) throw userBidError;
+
+      // Award XP for winning an auction via BIN (100 XP)
+      if (profile) {
+        const currentXp = profile.xp || 0;
+        const currentLevel = profile.level || 1;
+        const newXp = currentXp + 100;
+        const nextLevelXp = currentLevel * 1000;
+        
+        const updates: any = { xp: newXp, winCount: (profile.winCount || 0) + 1 };
+        if (newXp >= nextLevelXp) {
+          updates.level = currentLevel + 1;
+          updates.xp = newXp - nextLevelXp;
+          setTimeout(() => {
+            toast.success('Level Up!', { description: `You reached Trainer Level ${updates.level}!` });
+          }, 1000);
+        }
+        
+        const { error: profileError } = await supabase
+          .from('users')
+          .update(updates)
+          .eq('id', user.id);
+        
+        if (profileError) throw profileError;
+        setProfile({ ...profile, ...updates });
+      }
+
+      // Mark all active bids for this pokemon as won for this user
+      const { error: batchError } = await supabase
+        .from('user_bids')
+        .update({ status: 'won' })
+        .eq('userId', user.id)
+        .eq('pokemonName', auction.name)
+        .eq('status', 'active');
+      
+      if (batchError) throw batchError;
+      
+      processedAuctionRef.current = `${auction.name}-${auction.endTime}`;
+
+      // Notify via socket
+      socketRef.current?.emit('place_bid', { roomId: activeRoomId, bid: newBid });
+
+      toast.success('Purchase Successful!', {
+        description: `Congratulations! You've bought ${auction.name} for 🪙${binPrice.toLocaleString()}.`
+      });
+    } catch (error: any) {
+      console.error('BIN Error:', error);
+      toast.error('Purchase Failed', { description: error.message || 'An unexpected error occurred during the transaction. Please try again.' });
+    } finally {
+      setIsBidding(false);
+    }
+  };
+
+  const handleAdminLogin = () => {
+    if (adminPassword === 'dredd123') {
+      setIsAuthorized(true);
+      toast.success('Admin access granted');
+    } else {
+      toast.error('Incorrect Password');
+    }
+  };
+
+  const handleUpdateAuction = async () => {
+    if (!form.duration || isNaN(Number(form.duration))) {
+      toast.error('Invalid Duration', { description: 'Please set a valid auction duration in minutes.' });
+      return;
+    }
+
+    try {
+      const now = Date.now();
+      const durationMs = Number(form.duration) * 60 * 1000;
+      const updatedForm = {
+        ...form,
+        endTime: now + durationMs,
+        isSold: false,
+        winner: 'None',
+        winnerUid: ''
+      };
+      
+      const roomPath = activeRoomId.toLowerCase().replace(' ', '');
+      
+      // Update current auction in Supabase
+      const { error: auctionError } = await supabase
+        .from('rooms')
+        .update({ current_auction: updatedForm })
+        .eq('id', roomPath);
+      
+      if (auctionError) throw auctionError;
+
+      // Clear bid history for this room in Supabase
+      const { error: bidHistoryError } = await supabase
+        .from('bid_history')
+        .delete()
+        .eq('room_id', roomPath);
+      
+      if (bidHistoryError) throw bidHistoryError;
+
+      // Clear chat messages for this room in Supabase
+      const { error: chatError } = await supabase
+        .from('chat_messages')
+        .delete()
+        .eq('room', roomPath);
+      
+      if (chatError) throw chatError;
+
+      // Update room status
+      const { error: statusError } = await supabase
+        .from('rooms')
+        .update({ status: updatedForm.name })
+        .eq('id', roomPath);
+      
+      if (statusError) throw statusError;
+
+      // Notify via socket
+      socketRef.current?.emit('update_auction', { roomId: activeRoomId, auction: updatedForm });
+
+      toast.success('Auction Updated', { description: `The auction for ${form.name} has started in ${activeRoomId} with a ${form.duration} minute timer.` });
+    } catch (error: any) {
+      console.error('Update Auction Error:', error);
+      toast.error('Update Failed', { description: error.message || 'Could not update the auction. Please check your connection.' });
+    }
+  };
+
+  const parseBotMessage = (text: string) => {
+    if (!text.trim()) return null;
+
+    const nameMatch = text.match(/\*Name:\*\s*(.*)/i) || text.match(/Level\s+\d+\s+(.*)/i) || text.match(/^(.*)\s+Level\s+\d+/i) || text.match(/A wild (.*) appeared!/i) || text.match(/Name:\s*(.*)/i);
+    const levelMatch = text.match(/\*Level:\*\s*(\d+)/i) || text.match(/Level\s+(\d+)/i) || text.match(/Lvl\s*(\d+)/i);
+    const hpMatch = text.match(/\*HP:\*\s*(\d+)/i) || text.match(/HP:\s*(\d+)/i) || text.match(/HP\s*(\d+)/i);
+    const atkMatch = text.match(/\*Attack:\*\s*(\d+)/i) || text.match(/Atk:\s*(\d+)/i) || text.match(/Attack\s*(\d+)/i);
+    const defMatch = text.match(/\*Defense:\*\s*(\d+)/i) || text.match(/Def:\s*(\d+)/i) || text.match(/Defense\s*(\d+)/i);
+    const spdMatch = text.match(/\*Speed:\*\s*(\d+)/i) || text.match(/Spd:\s*(\d+)/i) || text.match(/Speed\s*(\d+)/i);
+    const movesMatch = text.match(/\*Moves:\*\s*([\s\S]*?)(?=\n\n|\n\*|$)/i) || text.match(/Moves:\s*(.*)/i);
+    const gmaxMatch = text.match(/\*Gigantamax Factor:\*\s*(.*)/i) || text.match(/Gigantamax Factor:\s*(.*)/i) || text.match(/G-Max:\s*(.*)/i);
+    const priceMatch = text.match(/Price:\s*\$?(\d+,?\d*)/i) || text.match(/Starting at\s*\$?(\d+,?\d*)/i) || text.match(/Start:\s*\$?(\d+,?\d*)/i);
+    const binPriceMatch = text.match(/Buy It Now:\s*\$?(\d+,?\d*)/i) || text.match(/BIN:\s*\$?(\d+,?\d*)/i);
+    const imageMatch = text.match(/Image:\s*(https?:\/\/\S+)/i) || text.match(/Pic:\s*(https?:\/\/\S+)/i) || text.match(/URL:\s*(https?:\/\/\S+)/i);
+
+    return {
+      name: nameMatch ? nameMatch[1].trim() : null,
+      level: levelMatch ? levelMatch[1] : null,
+      hp: hpMatch ? hpMatch[1] : null,
+      atk: atkMatch ? atkMatch[1] : null,
+      def: defMatch ? defMatch[1] : null,
+      spd: spdMatch ? spdMatch[1] : null,
+      moves: movesMatch ? movesMatch[1].trim() : null,
+      gmaxFactor: gmaxMatch ? gmaxMatch[1].trim() : null,
+      currentPrice: priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) : null,
+      binPrice: binPriceMatch ? parseInt(binPriceMatch[1].replace(/,/g, '')) : null,
+      imageUrl: imageMatch ? imageMatch[1].trim() : null,
+    };
+  };
+
+  const handleAutoFill = () => {
+    const parsed = parseBotMessage(parserText);
+    if (!parsed) return;
+
+    const newFields = new Set<string>();
+    const updatedForm = { ...form };
+
+    Object.entries(parsed).forEach(([key, value]) => {
+      if (value !== null) {
+        (updatedForm as any)[key] = value;
+        newFields.add(key);
+      }
+    });
+
+    setForm(updatedForm);
+    setHighlightedFields(newFields);
+    setParserText('');
+
+    // Clear highlights after 3 seconds
+    setTimeout(() => setHighlightedFields(new Set()), 3000);
+
+    // Only scroll when this button is clicked
+    pokemonNameRef.current?.scrollIntoView({ behavior: 'smooth' });
+    toast.success('Bot message parsed successfully!');
+  };
+
+  const handleResetBids = async () => {
+    try {
+      const roomPath = activeRoomId.toLowerCase().replace(' ', '');
+      
+      // Clear bid history in Supabase
+      const { error: bidHistoryError } = await supabase
+        .from('bid_history')
+        .delete()
+        .eq('room_id', roomPath);
+      
+      if (bidHistoryError) throw bidHistoryError;
+
+      // Reset current auction in Supabase
+      const newEndTime = 0;
+      const updatedAuction: AuctionData = {
+        ...auction,
+        currentPrice: '',
+        winner: 'None',
+        isSold: false,
+        endTime: newEndTime
+      };
+      
+      const { error: auctionError } = await supabase
+        .from('rooms')
+        .update({ current_auction: updatedAuction })
+        .eq('id', roomPath);
+      
+      if (auctionError) throw auctionError;
+
+      setForm(updatedAuction);
+      
+      // Notify via socket
+      socketRef.current?.emit('reset_bids', activeRoomId);
+      
+      toast.success('Reset Successful', { description: 'Bid history and timer have been cleared.' });
+    } catch (error: any) {
+      console.error('Reset Bids Error:', error);
+      toast.error('Reset Failed', { description: error.message || 'Could not reset the auction. Please check your connection.' });
+    }
+  };
+
+  const handleArchiveAuction = async () => {
+    if (!auction.winnerUid || auction.winner === 'None') {
+      toast.error('No Winner', { description: 'Cannot archive an auction without a winner.' });
+      return;
+    }
+
+    try {
+      const archiveData = {
+        name: auction.name,
+        level: auction.level,
+        hp: auction.hp,
+        atk: auction.atk,
+        def: auction.def,
+        spd: auction.spd,
+        moves: auction.moves,
+        gmaxFactor: auction.gmaxFactor,
+        finalPrice: Number(auction.currentPrice),
+        winner: auction.winner,
+        winnerUid: auction.winnerUid,
+        timestamp: Date.now(),
+        imageUrl: pokemonImageUrl || '',
+        roomId: activeRoomId
+      };
+
+      const { error: archiveError } = await supabase
+        .from('auction_archives')
+        .insert([archiveData]);
+      
+      if (archiveError) throw archiveError;
+      
+      const roomPath = activeRoomId.toLowerCase().replace(' ', '');
+      
+      // Clear current auction in Supabase
+      const { error: auctionError } = await supabase
+        .from('rooms')
+        .update({ current_auction: null, status: null })
+        .eq('id', roomPath);
+      
+      if (auctionError) throw auctionError;
+
+      // Clear bid history in Supabase
+      const { error: bidHistoryError } = await supabase
+        .from('bid_history')
+        .delete()
+        .eq('room_id', roomPath);
+      
+      if (bidHistoryError) throw bidHistoryError;
+
+      // Notify via socket
+      socketRef.current?.emit('archive_auction', { roomId: activeRoomId, archive: archiveData });
+
+      toast.success('Auction Archived', { description: `${auction.name} has been moved to archives.` });
+    } catch (error: any) {
+      console.error('Archive Error:', error);
+      handleSupabaseError(error, OperationType.CREATE, 'auction_archives');
+    }
+  };
+
+  const handleClearChat = async () => {
+    try {
+      const roomPath = activeRoomId.toLowerCase().replace(' ', '');
+      const { error } = await supabase
+        .from('chat_messages')
+        .delete()
+        .eq('room', roomPath);
+      
+      if (error) throw error;
+      
+      // Notify via socket
+      socketRef.current?.emit('clear_chat', activeRoomId);
+      
+      toast.success('Chat Cleared');
+    } catch (error: any) {
+      console.error('Clear Chat Error:', error);
+      toast.error('Failed to clear chat');
+    }
   };
 
   return (
-    <div 
-      ref={setNodeRef} 
-      style={style}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      className={`aspect-square rounded-xl flex items-center justify-center relative group border transition-all ${
-        isDragging ? 'shadow-2xl scale-105 border-white/40 ring-2 ring-blue-500/50' : ''
-      } ${
-        index >= 30 ? 'bg-blue-600/10 border-blue-500/30' : 'bg-white/5 border-white/5'
-      } ${isHovered && !isDragging ? 'bg-white/10 ring-1 ring-white/20' : ''}`}
-    >
-      <div 
-        {...attributes} 
-        {...listeners}
-        className="absolute top-1 right-2 p-1 text-white/20 hover:text-white/60 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity"
-      >
-        <GripHorizontal size={14} />
-      </div>
-
-      <img 
-        src={sticker.url} 
-        className="max-w-[70%] max-h-[70%] object-contain pointer-events-none" 
-        referrerPolicy="no-referrer" 
-      />
-      <span className="absolute top-1.5 left-2 text-[10px] text-white/30 font-bold">{index + 1}</span>
-      
-      {sticker.isAnimated && (
-        <div className="absolute top-1.5 right-6 bg-blue-500/20 text-blue-400 p-0.5 rounded shadow-sm" title="Animated Sticker">
-          <Play size={8} fill="currentColor" />
-        </div>
-      )}
-
-      {/* Hover Floating Preview */}
-      <AnimatePresence>
-        {isHovered && !isDragging && (
+    <div className="min-h-screen bg-[#0a0a2e] text-white font-sans selection:bg-purple-500 selection:text-white overflow-x-hidden">
+      <AnimatePresence mode="wait">
+        {isAuthLoading ? (
           <motion.div
-            initial={{ opacity: 0, scale: 0.8, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.8, y: 10 }}
-            className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-32 h-32 glass-panel border border-white/20 rounded-2xl shadow-2xl p-4 flex items-center justify-center pointer-events-none z-[100]"
+            key="loading-screen"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-[#0a0a2e] flex flex-col items-center justify-center"
           >
-            <img 
-              src={sticker.url} 
-              className="w-full h-full object-contain" 
-              referrerPolicy="no-referrer" 
-            />
-            {sticker.isAnimated && (
-               <div className="absolute top-2 right-2 flex items-center gap-1">
-                 <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
-                 <span className="text-[8px] font-bold text-blue-400 uppercase tracking-tighter">Preview</span>
-               </div>
-            )}
-            <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-[#1e293b] rotate-45 border-r border-b border-white/10" />
+            <div className="relative">
+              <div className="absolute inset-0 bg-purple-500/20 blur-3xl rounded-full scale-150 animate-pulse" />
+              <DreddBotzLogo isActive={true} isSold={false} />
+            </div>
+            <div className="mt-12 flex flex-col items-center gap-4">
+              <div className="w-48 h-1 bg-white/5 rounded-full overflow-hidden">
+                <motion.div 
+                  initial={{ x: '-100%' }}
+                  animate={{ x: '100%' }}
+                  transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+                  className="w-full h-full bg-gradient-to-r from-transparent via-purple-500 to-transparent"
+                />
+              </div>
+              <span className="text-white/40 text-[10px] font-black uppercase tracking-[0.3em] animate-pulse">
+                Initializing DreddBotz System...
+              </span>
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AuctionHeader 
+        user={user}
+        profile={profile}
+        isAuthLoading={isAuthLoading}
+        onLogin={handleLogin}
+        onLogout={handleLogout}
+        onOpenProfile={() => setIsProfileOpen(true)}
+        onOpenMenu={() => setIsMenuOpen(true)}
+        activeRoomId={activeRoomId}
+        setActiveRoomId={setActiveRoomId}
+        isSoundEnabled={isSoundEnabled}
+        setIsSoundEnabled={setIsSoundEnabled}
+        auctionStatus={auctionStatus}
+      />
+
+      <SideMenu 
+        isOpen={isMenuOpen}
+        onClose={() => setIsMenuOpen(false)}
+        roomsStatus={roomsStatus}
+        activeRoomId={activeRoomId}
+        setActiveRoomId={(id) => {
+          setActiveRoomId(id);
+          setActiveView('auction');
+        }}
+        activeView={activeView}
+        setActiveView={setActiveView}
+        onlineCount={onlineCount}
+      />
+
+      <AnimatePresence>
+        {isOffline && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="bg-red-500/80 text-white text-center py-2 px-4 font-bold text-sm shadow-xl backdrop-blur-2xl flex items-center justify-center gap-2 z-50 relative border-b border-red-400/50"
+          >
+            <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+            You are currently offline. Live updates and bidding are paused.
           </motion.div>
         )}
       </AnimatePresence>
 
-      <button 
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemove(sticker.id);
-        }}
-        className="absolute bottom-1 right-1 bg-red-500 rounded-full p-1 opacity-1 group-hover:opacity-100 md:opacity-0 transition-opacity hover:scale-110"
-      >
-        <Trash2 size={10} />
-      </button>
-      
-      {sticker.emoji && (
-        <span className="absolute bottom-1 left-2 text-[10px] opacity-40">{sticker.emoji}</span>
-      )}
-    </div>
-  );
-};
-
-export default function App() {
-  const [stickers, setStickers] = useState<Sticker[]>(() => {
-    const saved = localStorage.getItem('stickerPackItems');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to parse saved stickers", e);
-      }
-    }
-    return [];
-  });
-  const [metadata, setMetadata] = useState<PackMetadata>(() => {
-    const saved = localStorage.getItem('stickerPackMetadata');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to parse saved metadata", e);
-      }
-    }
-    return {
-      title: 'My Sticker Pack',
-      author: 'StickerChef'
-    };
-  });
-  const [telegramLink, setTelegramLink] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [isHoveringPreview, setIsHoveringPreview] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // DND Sensors
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 5, // minimum distance before drag starts (prevent accidentally dragging on click)
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
-
-  // Auto-Save: Save on change (using functional initialization above for loading)
-  useEffect(() => {
-    localStorage.setItem('stickerPackMetadata', JSON.stringify(metadata));
-    
-    // We strip binary 'file' objects before saving to localStorage to keep it under 5MB limit
-    const persistentStickers = stickers.map(({ file, ...rest }: any) => rest);
-    localStorage.setItem('stickerPackItems', JSON.stringify(persistentStickers));
-  }, [metadata, stickers]);
-
-  const handleShare = async () => {
-    const shareText = `Check out my new sticker pack "${metadata.title}" by ${metadata.author}! Created with StickerChef.`;
-    const shareUrl = window.location.href;
-    const shareData = {
-      title: metadata.title,
-      text: shareText,
-      url: shareUrl,
-    };
-
-    try {
-      // Small check to see if we're in an iframe - share often fails in iframes
-      const isInIframe = window.self !== window.top;
-
-      if (navigator.share && !isInIframe) {
-        await navigator.share(shareData);
-      } else {
-        throw new Error('Share API not supported or blocked');
-      }
-    } catch (err) {
-      // Fallback to clipboard for any failure (user cancellation, desktop browser, iframe restriction)
-      try {
-        await navigator.clipboard.writeText(`${shareText} ${shareUrl}`);
-        setSuccess('Link copied to clipboard!');
-        setError(null);
-      } catch (clipboardErr) {
-        console.error('Clipboard fallback failed:', clipboardErr);
-        setError('Failed to share or copy link.');
-      }
-    }
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-
-    const newStickers: Sticker[] = Array.from(files)
-      .filter((file: File) => {
-        const ext = file.name.split('.').pop()?.toLowerCase();
-        return ['webp', 'png', 'jpg', 'jpeg', 'webm', 'tgs'].includes(ext || '');
-      })
-      .map((file: File) => {
-        const ext = file.name.split('.').pop()?.toLowerCase();
-        return {
-          id: Math.random().toString(36).substr(2, 9),
-          url: URL.createObjectURL(file),
-          name: file.name,
-          file,
-          isAnimated: ['webm', 'tgs'].includes(ext || '') || file.type.includes('webp') // Sharp will double check
-        };
-      });
-
-    setStickers(prev => [...prev, ...newStickers]);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const removeSticker = (id: string) => {
-    setStickers(prev => {
-      const filtered = prev.filter(s => s.id !== id);
-      const removed = prev.find(s => s.id === id);
-      if (removed?.url.startsWith('blob:')) {
-        URL.revokeObjectURL(removed.url);
-      }
-      return filtered;
-    });
-  };
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-
-    if (active.id !== over?.id) {
-      setStickers((items) => {
-        const oldIndex = items.findIndex((i) => i.id === active.id);
-        const newIndex = items.findIndex((i) => i.id === over?.id);
-        return arrayMove(items, oldIndex, newIndex);
-      });
-    }
-  };
-
-  const fetchTelegramPack = async () => {
-    if (!telegramLink) return;
-    setLoading(true);
-    setError(null);
-    setSuccess(null);
-
-    try {
-      // Step 1: Resolve Telegram sticker set name from URL
-      let nameToFetch = telegramLink;
-      if (nameToFetch.includes('t.me/addstickers/')) {
-        nameToFetch = nameToFetch.split('t.me/addstickers/')[1].split('/')[0].split('?')[0];
-      } else if (nameToFetch.includes('/')) {
-        nameToFetch = nameToFetch.split('/').pop() || '';
-      }
-
-      const response = await axios.post('/api/telegram/pack', { packName: nameToFetch });
-      const packData = response.data;
-
-      // Update metadata from Telegram pack
-      setMetadata({
-        title: packData.title || nameToFetch,
-        author: packData.publisher || 'Telegram Importer'
-      });
-
-      const telegramStickers: Sticker[] = packData.stickers.map((s: any) => ({
-        id: s.file_id,
-        url: `/api/telegram/file?fileId=${s.file_id}`,
-        telegramFileId: s.file_id,
-        emoji: s.emoji,
-        // Detection for animations (Step 1)
-        isAnimated: packData.is_animated || packData.is_video || s.is_animated || s.is_video
-      }));
-
-      setStickers(prev => [...prev, ...telegramStickers]);
-      setSuccess(`Imported ${telegramStickers.length} stickers from Telegram!`);
-      setTelegramLink('');
-    } catch (err: any) {
-      console.error(err);
-      setError(err.response?.data?.error || "Could not find Telegram pack.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const generateWastickers = async () => {
-    if (stickers.length === 0) return;
-    setLoading(true);
-    setProgress(0);
-    setSuccess(null);
-    setError(null);
-
-    try {
-      const processedStickers = [];
-      const totalSteps = stickers.length;
-      
-      for (let i = 0; i < stickers.length; i++) {
-        const s = stickers[i];
-        let buffer_data: any;
-        
-        if (s.file) {
-          buffer_data = s.file;
-        } else {
-          const resp = await axios.get(s.url, { responseType: 'blob' });
-          buffer_data = resp.data;
-        }
-
-        const formData = new FormData();
-        formData.append('image', buffer_data);
-        // Step 2 Margin Rule & Animation Logic: Pass animation flag to Sharp pipeline
-        if (s.isAnimated) formData.append('isAnimated', 'true');
-        
-        const response = await axios.post('/api/sticker/process', formData, {
-          responseType: 'blob'
-        });
-
-        const reader = new FileReader();
-        const base64Promise = new Promise<string>((resolve) => {
-          reader.onloadend = () => {
-            const base64String = (reader.result as string).split(',')[1];
-            resolve(base64String);
-          };
-          reader.readAsDataURL(response.data);
-        });
-
-        const base64 = await base64Promise;
-        processedStickers.push({
-          data: base64,
-          emojis: [s.emoji || '✨']
-        });
-
-        setProgress(Math.round(((i + 1) / totalSteps) * 100));
-      }
-
-      // Step 3: Packaging & The Deep Link
-      const bundleResponse = await axios.post('/api/sticker/bundle', {
-        title: metadata.title,
-        author: metadata.author,
-        stickers: processedStickers,
-        isAnimatedPack: stickers.some(s => s.isAnimated)
-      });
-
-      const bundleData = bundleResponse.data;
-      const jsonString = JSON.stringify(bundleData);
-      
-      // Intent Logic (Step 3): Open WhatsApp Deep Link
-      // data query parameter is expected to be base64 encoded contents.json
-      const deepLink = `whatsapp://stickerpack/v1/metadata?data=${btoa(unescape(encodeURIComponent(jsonString)))}`;
-      
-      // Fallback: Download .wastickers bundle
-      const blob = new Blob([jsonString], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${metadata.title.replace(/\s+/g, '_')}.wastickers`;
-      
-      try {
-        // Attempt deep link first for "One-Tap"
-        if (!/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-          throw new Error('Not mobile');
-        }
-        window.location.href = deepLink;
-        setSuccess("Triggering WhatsApp import...");
-        
-        setTimeout(() => {
-          link.click();
-          setSuccess("One-Tap triggered! (Backup file downloaded)");
-        }, 1500);
-      } catch (e) {
-        link.click();
-        setSuccess("WA Stickers bundle generated! Open with a Sticker Importer.");
-      }
-    } catch (err) {
-      console.error(err);
-      setError("Failed to create WhatsApp pack. Try a smaller set?");
-    } finally {
-      setLoading(false);
-      setProgress(0);
-    }
-  };
-
-  const generateZip = async () => {
-    if (stickers.length === 0) return;
-    setLoading(true);
-    setProgress(0);
-    setSuccess(null);
-    setError(null);
-    
-    try {
-      const zip = new JSZip();
-      const packsCount = Math.ceil(stickers.length / MAX_PER_PACK);
-      const totalSteps = stickers.length + packsCount;
-      let currentStep = 0;
-      
-      for (let i = 0; i < packsCount; i++) {
-        const packFolder = zip.folder(`${metadata.title}_Part_${i + 1}`);
-        const packStickers = stickers.slice(i * MAX_PER_PACK, (i + 1) * MAX_PER_PACK);
-        
-        const packInfo = {
-          identifier: `${metadata.title.toLowerCase().replace(/\s+/g, '_')}_${i + 1}`,
-          name: `${metadata.title} (Part ${i + 1})`,
-          publisher: metadata.author,
-          tray_image_file: 'tray_icon.webp',
-          image_data_version: '1',
-          avoid_cache: false,
-          stickers: packStickers.map((s, idx) => ({
-            image_file: `${idx + 1}.webp`,
-            emojis: [s.emoji || '✨']
-          }))
-        };
-
-        packFolder?.file('info.json', JSON.stringify(packInfo, null, 2));
-        currentStep++;
-        setProgress(Math.round((currentStep / totalSteps) * 100));
-
-        for (let j = 0; j < packStickers.length; j++) {
-          const s = packStickers[j];
-          let blob: Blob;
-
-          if (s.file) {
-            blob = s.file;
-          } else {
-            const resp = await axios.get(s.url, { responseType: 'blob' });
-            blob = resp.data;
-          }
-          
-          const formData = new FormData();
-          formData.append('image', blob);
-          const response = await axios.post('/api/sticker/process', formData, { responseType: 'blob' });
-          
-          packFolder?.file(`${j + 1}.webp`, response.data);
-          if (j === 0) packFolder?.file('tray_icon.webp', response.data);
-          
-          currentStep++;
-          setProgress(Math.round((currentStep / totalSteps) * 100));
-        }
-      }
-
-      const content = await zip.generateAsync({ type: 'blob' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(content);
-      link.download = `${metadata.title}_Stickers.zip`;
-      link.click();
-      
-      setSuccess(`Exported ${packsCount} bundle(s) successfully!`);
-    } catch (err) {
-      console.error(err);
-      setError("Failed to generate ZIP.");
-    } finally {
-      setLoading(false);
-      setProgress(0);
-    }
-  };
-
-  return (
-    <div className="w-full h-full md:w-[95vw] md:h-[90vh] md:max-w-7xl glass-panel md:rounded-[24px] flex flex-col shadow-2xl animate-in fade-in zoom-in duration-500 overflow-hidden">
-      {/* Header */}
-      <header className="p-6 md:px-8 border-b border-white/10 flex items-center justify-between">
-        <div className="logo-gradient font-extrabold text-xl tracking-tighter">STICKERCHEF</div>
-        
-        <div className="flex gap-3 w-[500px]">
-          <input 
-            type="text" 
-            value={telegramLink}
-            onChange={e => setTelegramLink(e.target.value)}
-            placeholder="t.me/addstickers/PackName"
-            className="flex-grow bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-sm text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
-          />
-          <button 
-            onClick={fetchTelegramPack}
-            disabled={loading || !telegramLink}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-xl font-bold text-sm transition-colors disabled:opacity-50"
-          >
-            {loading ? '...' : 'Import Pack'}
-          </button>
-        </div>
-        <div className="w-[100px] flex justify-end gap-3 items-center">
-          <button 
-            onClick={handleShare}
-            className="text-white/40 hover:text-white transition-colors"
-            title="Share App Link"
-          >
-            <LinkIcon size={18} />
-          </button>
-          <input 
-            type="file" 
-            multiple 
-            accept="image/webp,image/png,image/jpeg,video/webm,.tgs"
-            ref={fileInputRef}
-            onChange={handleFileUpload}
-            className="hidden" 
-          />
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            className="text-white/60 hover:text-white transition-colors"
-            title="Upload Local Files"
-          >
-            <Upload size={20} />
-          </button>
-        </div>
-      </header>
-
-      {/* Main Layout */}
-      <div className="flex flex-grow overflow-hidden">
-        {/* Sidebar */}
-        <aside className="w-[280px] border-r border-white/10 p-8 flex flex-col gap-6 overflow-y-auto relative">
-          <div className="relative">
+      {/* Background Gradients */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <AnimatePresence>
+          {isFinalCountdown && !auction.isSold && (
             <motion.div 
-              onMouseEnter={() => setIsHoveringPreview(true)}
-              onMouseLeave={() => setIsHoveringPreview(false)}
-              onClick={() => fileInputRef.current?.click()}
-              className="w-[120px] h-[120px] bg-white/10 border-2 border-dashed border-white/20 rounded-[20px] flex items-center justify-center self-center cursor-pointer hover:bg-white/15 transition-all text-4xl overflow-hidden shadow-inner mx-auto group"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-red-900/20 z-0 animate-pulse"
+            />
+          )}
+        </AnimatePresence>
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-purple-900/20 blur-[120px] rounded-full" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-900/20 blur-[120px] rounded-full" />
+      </div>
+
+      {/* Main Content */}
+      <main className="relative z-10 max-w-4xl mx-auto px-4 py-8">
+        <AnimatePresence mode="wait">
+          {activeView === 'auction' && (
+            <motion.div
+              key="auction-view"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.3 }}
             >
-              {stickers.length > 0 ? (
-                <img src={stickers[0].url} className="w-[80px] h-[80px] object-contain group-hover:scale-110 transition-transform" referrerPolicy="no-referrer" />
-              ) : '✨'}
-            </motion.div>
-
-            {/* Hover Enlarged Preview */}
-            <AnimatePresence>
-              {isHoveringPreview && stickers.length > 0 && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.8, x: 20 }}
-                  animate={{ opacity: 1, scale: 1, x: 0 }}
-                  exit={{ opacity: 0, scale: 0.8, x: 20 }}
-                  className="absolute left-full top-0 ml-4 w-[200px] h-[200px] glass-panel rounded-3xl p-6 z-[100] shadow-2xl pointer-events-none"
-                >
-                  <img src={stickers[0].url} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
-                  <div className="absolute inset-0 bg-blue-500/5 rounded-3xl" />
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          <div className="space-y-4">
-            <div>
-              <label className="text-[11px] uppercase tracking-wider text-white/50 mb-2 block font-medium">Pack Title</label>
-              <input 
-                type="text" 
-                value={metadata.title}
-                onChange={e => setMetadata(prev => ({ ...prev, title: e.target.value }))}
-                className="bg-transparent border-b border-white/20 text-white py-1 w-full text-lg focus:outline-none focus:border-blue-500 transition-colors"
-                placeholder="Enter title..."
-              />
-            </div>
-            <div>
-              <label className="text-[11px] uppercase tracking-wider text-white/50 mb-2 block font-medium">Author</label>
-              <input 
-                type="text" 
-                value={metadata.author}
-                onChange={e => setMetadata(prev => ({ ...prev, author: e.target.value }))}
-                className="bg-transparent border-b border-white/20 text-white py-1 w-full text-lg focus:outline-none focus:border-blue-500 transition-colors"
-                placeholder="Enter author..."
-              />
-            </div>
-            <div>
-              <label className="text-[11px] uppercase tracking-wider text-white/50 mb-2 block font-bold">Total Stickers</label>
-              <div className="text-2xl font-bold flex items-baseline gap-2">
-                {stickers.length} 
-                <span className="text-sm font-normal opacity-30">/ auto-split {MAX_PER_PACK}</span>
+              {/* 1. Top Container: Pulsing Logo */}
+              <div className="flex justify-center mb-8 h-28 sm:h-32">
+                <AnimatePresence>
+                  {(isAuctionActive && pokemonImageUrl) && (
+                    <motion.div
+                      layoutId="main-logo"
+                      transition={{ type: "spring", stiffness: 100, damping: 15 }}
+                      className="relative"
+                    >
+                      <DreddBotzLogo isActive={isAuctionActive} isSold={auction.isSold} />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
-            </div>
-          </div>
 
-          <AnimatePresence>
-            {(error || success) && (
-              <motion.div 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                className={`p-3 rounded-xl text-xs font-semibold border ${
-                  error ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-green-500/10 border-green-500/30 text-green-400'
-                }`}
-              >
-                {error || success}
-              </motion.div>
-            )}
-          </AnimatePresence>
+              <PokemonCard 
+                auction={auction}
+                isAuctionActive={isAuctionActive}
+                pokemonImageUrl={pokemonImageUrl}
+                isImageLoading={isImageLoading}
+                timeLeft={timeLeft}
+                isEndingSoon={isEndingSoon}
+                user={user}
+                onBuyItNow={handleBuyItNow}
+                isWatchlisted={profile?.watchlist?.includes(auction.name)}
+                onToggleWatchlist={() => {
+                  if (!profile) return;
+                  const currentWatchlist = profile.watchlist || [];
+                  const isWatchlisted = currentWatchlist.includes(auction.name);
+                  const updatedWatchlist = isWatchlisted 
+                    ? currentWatchlist.filter(name => name !== auction.name)
+                    : [...currentWatchlist, auction.name];
+                  updateProfile({ watchlist: updatedWatchlist });
+                  toast.success(isWatchlisted ? 'Removed from Watchlist' : 'Added to Watchlist');
+                }}
+              />
 
-          {stickers.length > 30 && (
-            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-xs text-amber-200/80 leading-relaxed italic">
-              ⚠️ <strong>Auto-Split:</strong> Since your pack exceeds 30 stickers, it will be split into multiple sub-packs for WhatsApp compatibility.
-            </div>
+              {isAuctionActive && (
+                <BiddingSection 
+                  currentPrice={auction.currentPrice}
+                  winner={auction.winner}
+                  winnerUid={auction.winnerUid}
+                  userId={user?.id}
+                  bidAmount={bidAmount}
+                  setBidAmount={(val) => {
+                    setBidAmount(val);
+                    if (bidError) setBidError(null);
+                  }}
+                  onPlaceBid={handlePlaceBid}
+                  isBidding={isBidding}
+                  error={bidError}
+                  isFinalCountdown={isFinalCountdown}
+                />
+              )}
+
+              <LiveChat isAuctionActive={isAuctionActive} user={user} activeRoomId={activeRoomId} socket={socketRef.current} />
+              
+              <BidHistory bidHistory={bidHistory} />
+            </motion.div>
           )}
 
-          <div className="mt-auto space-y-4">
-             {loading && progress > 0 && (
-               <div className="space-y-2">
-                 <div className="flex justify-between text-[10px] uppercase font-bold text-white/40">
-                   <span>Bundling...</span>
-                   <span>{progress}%</span>
-                 </div>
-                 <div className="h-1 w-full bg-white/10 rounded-full overflow-hidden">
-                   <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${progress}%` }}
-                    className="h-full bg-[#10b981] transition-all" 
-                   />
-                 </div>
-               </div>
-             )}
-             <button 
-              onClick={() => {
-                if (confirm('Clear all stickers and metadata?')) {
-                  setStickers([]);
-                  localStorage.removeItem('stickerPackItems');
-                  localStorage.removeItem('stickerPackMetadata');
-                }
-              }}
-              className="w-full text-[10px] text-white/30 hover:text-red-400 uppercase font-black transition-colors"
+          {activeView === 'leaderboard' && (
+            <motion.div
+              key="leaderboard-view"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.3 }}
             >
-              Reset All Progress
-            </button>
-            <div className="space-y-2">
-              <button 
-                onClick={generateWastickers}
-                disabled={loading || stickers.length === 0}
-                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-900/40 transition-all disabled:opacity-50 disabled:grayscale flex items-center justify-center gap-2"
-              >
-                {loading ? 'OPTIMIZING...' : <><Download size={18} /> ADD TO WHATSAPP</>}
-              </button>
-              <button 
-                onClick={generateZip}
-                disabled={loading || stickers.length === 0}
-                className="w-full bg-white/5 hover:bg-white/10 text-white/60 font-medium py-3 rounded-xl border border-white/10 transition-all disabled:opacity-50 disabled:grayscale text-sm"
-              >
-                {loading ? '...' : '.ZIP BUNDLE'}
-              </button>
-            </div>
-          </div>
-        </aside>
+              <Leaderboard leaderboard={leaderboard} />
+            </motion.div>
+          )}
 
-        {/* Content Area */}
-        <main className="flex-grow p-8 overflow-y-auto">
-          <div className="flex justify-between items-center mb-6">
-            <div>
-              <h2 className="text-xl font-bold">Pack Contents</h2>
-              <p className="text-xs text-white/50">Drag a sticker to reorder it</p>
-            </div>
-            <div className={`px-3 py-1 rounded-full text-xs border ${
-              stickers.length > 0 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-white/10 text-white/40 border-white/10'
-            }`}>
-              {stickers.length > 0 ? 'Conversion Ready' : 'Empty Pack'}
-            </div>
-          </div>
+          {activeView === 'trading' && (
+            <motion.div
+              key="trading-view"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.3 }}
+            >
+              <TradingFloor user={user} profile={profile} />
+            </motion.div>
+          )}
 
-          <DndContext 
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
+          {activeView === 'collection' && (
+            <motion.div
+              key="collection-view"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.3 }}
+            >
+              <TrainerCollection user={user} />
+            </motion.div>
+          )}
+
+          {activeView === 'archives' && (
+            <motion.div
+              key="archives-view"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.3 }}
+            >
+              <AuctionArchives user={user} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <Toaster position="bottom-center" richColors expand={false} />
+
+        {/* 6. Hidden Admin Panel Trigger & Community Link */}
+        <div className="mt-24 flex flex-col items-center gap-4 opacity-20 hover:opacity-100 transition-opacity">
+          <a 
+            href="https://chat.whatsapp.com/BAfBWraYjOHCYTD1Mlpoab?mode=gi_t"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-white/40 text-[10px] font-black uppercase tracking-[0.2em] hover:text-green-400 transition-colors flex items-center gap-2"
           >
-            <div className="grid grid-cols-6 gap-4">
-              <SortableContext 
-                items={stickers.map(s => s.id)}
-                strategy={rectSortingStrategy}
-              >
-                <AnimatePresence>
-                  {stickers.map((sticker, idx) => (
-                    <SortableSticker 
-                      key={sticker.id} 
-                      sticker={sticker} 
-                      index={idx} 
-                      onRemove={removeSticker} 
-                    />
-                  ))}
-                </AnimatePresence>
-              </SortableContext>
-              
-              {stickers.length === 0 && (
-                <div className="col-span-6 h-64 flex flex-col items-center justify-center opacity-20 italic">
-                  <Layers size={48} className="mb-2" />
-                  <p>Add stickers to begin</p>
-                </div>
-              )}
-            </div>
-          </DndContext>
-        </main>
-      </div>
+            Join the DreddBotz Community
+          </a>
+          <button 
+            onClick={() => setIsAdminOpen(true)}
+            className="text-white/20 font-black tracking-[0.5em] text-xs hover:text-purple-400 transition-colors cursor-pointer"
+          >
+            𝐃𝐑𝐄𝐃𝐃ＢＯＴＺ
+          </button>
+        </div>
+      </main>
+
+      <ProfileModal 
+        isOpen={isProfileOpen}
+        onClose={() => setIsProfileOpen(false)}
+        user={user}
+        profile={profile}
+        setProfile={setProfile}
+        onUpdateProfile={updateProfile}
+        onUploadAvatar={handleUploadAvatar}
+        userBids={userBids}
+        isUploading={isUploading}
+      />
+
+      <BINConfirmModal 
+        isOpen={isBINConfirmOpen}
+        onClose={() => setIsBINConfirmOpen(false)}
+        onConfirm={confirmBuyItNow}
+        auction={auction}
+      />
+
+      <AdminPanel 
+        isOpen={isAdminOpen}
+        onClose={() => setIsAdminOpen(false)}
+        isAuthorized={isAuthorized}
+        adminPassword={adminPassword}
+        setAdminPassword={setAdminPassword}
+        onAuthorize={handleAdminLogin}
+        form={form}
+        setForm={setForm}
+        parserText={parserText}
+        setParserText={setParserText}
+        onAutoFill={handleAutoFill}
+        onUpdateAuction={handleUpdateAuction}
+        onArchiveAuction={handleArchiveAuction}
+        onResetBids={async () => {
+          const roomPath = activeRoomId.toLowerCase().replace(' ', '');
+          const { error } = await supabase
+            .from('bid_history')
+            .delete()
+            .eq('room_id', roomPath);
+          
+          if (error) {
+            toast.error('Reset Failed', { description: error.message });
+            return;
+          }
+          
+          socketRef.current?.emit('reset_bids', activeRoomId);
+          toast.success('Bids Reset', { description: `Bid history for ${activeRoomId} has been cleared.` });
+        }}
+        onClearChat={async () => {
+          const roomPath = activeRoomId.toLowerCase().replace(' ', '');
+          const { error } = await supabase
+            .from('chat_messages')
+            .delete()
+            .eq('room', roomPath);
+          
+          if (error) {
+            toast.error('Clear Failed', { description: error.message });
+            return;
+          }
+          
+          socketRef.current?.emit('clear_chat', activeRoomId);
+          toast.success('Chat Cleared', { description: `Live chat for ${activeRoomId} has been cleared.` });
+        }}
+        highlightedFields={highlightedFields}
+        pokemonNameRef={pokemonNameRef}
+        parseBotMessage={parseBotMessage}
+        activeRoomId={activeRoomId}
+        setActiveRoomId={setActiveRoomId}
+      />
+
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.05);
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: rgba(168, 85, 247, 0.3);
+          border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: rgba(168, 85, 247, 0.5);
+        }
+      `}</style>
     </div>
   );
 }
