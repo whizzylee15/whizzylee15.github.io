@@ -1,0 +1,6 @@
+{
+  "name": "StickerChef",
+  "description": "Create WhatsApp sticker packs from WebP files and Telegram sticker links. Supports packs larger than 30 stickers by auto-splitting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
