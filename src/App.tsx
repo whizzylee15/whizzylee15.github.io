@@ -21,7 +21,6 @@ import { LiveChat } from './components/LiveChat';
 import { TradingFloor } from './components/TradingFloor';
 import { AuctionArchives } from './components/AuctionArchives';
 import { SideMenu } from './components/SideMenu';
-import SupabaseTodos from './components/SupabaseTodos';
 import { LayoutGrid, Volume2, VolumeX } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import confetti from 'canvas-confetti';

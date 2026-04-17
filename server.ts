@@ -1,22 +1,17 @@
 import 'dotenv/config';
 import express from 'express';
-import cookieParser from 'cookie-parser';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { supabaseMiddleware } from './src/utils/supabase/middleware.ts';
-import { createClient } from './src/utils/supabase/server.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  app.use(cookieParser());
   app.use(express.json());
-  app.use(supabaseMiddleware);
 
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
@@ -238,19 +233,6 @@ async function startServer() {
     });
     io.emit('rooms_status', status);
   }
-
-  // Supabase API endpoints
-  app.get('/api/todos', async (req, res) => {
-    try {
-      const supabase = createClient(req, res);
-      const { data, error } = await supabase.from('todos').select();
-      
-      if (error) throw error;
-      res.json(data);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
 
   // OAuth Callback for Popups
   app.get(['/auth/callback', '/auth/callback/'], (req, res) => {
