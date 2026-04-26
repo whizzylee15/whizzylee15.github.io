@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { motion, AnimatePresence, useMotionValue, useSpring, useTransform } from 'motion/react';
 import { Heart, Swords, Shield, Zap, Trophy, Loader2, Dna, Compass, Star } from 'lucide-react';
 import { User } from '@supabase/supabase-js';
+import { toast } from 'sonner';
 import { DreddBotzLogo } from './Logo';
 import { SafeImage } from './SafeImage';
 
@@ -76,6 +77,23 @@ export const PokemonCard: React.FC<PokemonCardProps> = ({
   const handleMouseLeave = () => {
     x.set(0);
     y.set(0);
+  };
+
+  const handleToggleWatchlist = () => {
+    if (!user) {
+      toast.error('Please login to use the watchlist');
+      return;
+    }
+    
+    if (onToggleWatchlist) {
+      onToggleWatchlist();
+      
+      if (isWatchlisted) {
+        toast.success(`Removed ${auction.name} from watchlist`);
+      } else {
+        toast.success(`Added ${auction.name} to watchlist!`, { icon: '⭐' });
+      }
+    }
   };
 
   return (
@@ -192,7 +210,7 @@ export const PokemonCard: React.FC<PokemonCardProps> = ({
         className={`glass-card ${isEndingSoon ? 'border-red-500/40 shadow-[0_0_50px_rgba(239,68,68,0.2)]' : ''} rounded-3xl p-6 sm:p-8 flex flex-col items-center relative overflow-hidden mt-6 sm:mt-0 transition-all duration-1000`}
       >
         <button 
-          onClick={onToggleWatchlist}
+          onClick={handleToggleWatchlist}
           className={`absolute top-6 right-6 z-30 p-2 ${isWatchlisted ? 'bg-yellow-500/20 border-yellow-500/50' : 'glass-button'} rounded-full transition-colors group`}
         >
           <Star className={`w-5 h-5 ${isWatchlisted ? 'text-yellow-400 fill-yellow-400' : 'text-white/40 group-hover:text-yellow-400'} transition-colors`} />

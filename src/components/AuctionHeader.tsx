@@ -24,6 +24,7 @@ interface AuctionHeaderProps {
   isSoundEnabled: boolean;
   setIsSoundEnabled: (val: boolean) => void;
   auctionStatus: string;
+  onlineCount: number;
 }
 
 export const AuctionHeader: React.FC<AuctionHeaderProps> = ({
@@ -38,7 +39,8 @@ export const AuctionHeader: React.FC<AuctionHeaderProps> = ({
   setActiveRoomId,
   isSoundEnabled,
   setIsSoundEnabled,
-  auctionStatus
+  auctionStatus,
+  onlineCount
 }) => {
   const rooms = ['Room 1', 'Room 2', 'Room 3'];
   return (
@@ -57,6 +59,10 @@ export const AuctionHeader: React.FC<AuctionHeaderProps> = ({
                 <h1 className="text-lg sm:text-xl font-black tracking-tighter uppercase italic leading-none text-white">DreddBotz</h1>
                 <span className="md:hidden px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-purple-500/20 text-purple-400">
                   {activeRoomId}
+                </span>
+                <span className="px-1.5 py-0.5 rounded text-[8px] font-black tracking-widest bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1 uppercase">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  {onlineCount} Online
                 </span>
               </div>
               <div className="flex items-center gap-2 mt-0.5">

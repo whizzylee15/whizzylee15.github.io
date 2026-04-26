@@ -22,8 +22,10 @@ interface TrainerCollectionProps {
 
 export const TrainerCollection: React.FC<TrainerCollectionProps> = ({ user }) => {
   const [collectionItems, setCollectionItems] = useState<ArchivedAuction[]>([]);
+  const [tradeHistory, setTradeHistory] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [sortBy, setSortBy] = useState<'date' | 'price' | 'name'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -33,7 +35,9 @@ export const TrainerCollection: React.FC<TrainerCollectionProps> = ({ user }) =>
   useEffect(() => {
     if (!user) {
       setCollectionItems([]);
+      setTradeHistory([]);
       setIsLoading(false);
+      setIsLoadingHistory(false);
       return;
     }
 
@@ -52,12 +56,32 @@ export const TrainerCollection: React.FC<TrainerCollectionProps> = ({ user }) =>
       setIsLoading(false);
     };
 
+    const fetchTradeHistory = async () => {
+      // Assuming a foreign key relation exists between trade_offers and trade_items
+      const { data, error } = await supabase
+        .from('trade_offers')
+        .select('*, trade_items(pokemonName, imageUrl, sellerName)')
+        .in('status', ['accepted', 'rejected'])
+        .or(`offererUid.eq.${user.id},sellerUid.eq.${user.id}`);
+
+      if (error) {
+        console.error('Error fetching trade history:', error);
+      } else {
+        setTradeHistory(data || []);
+      }
+      setIsLoadingHistory(false);
+    };
+
     fetchCollection();
+    fetchTradeHistory();
 
     const channel = supabase
       .channel(`trainer_collection_${user.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_archives', filter: `winnerUid=eq.${user.id}` }, () => {
         fetchCollection();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trade_offers' }, () => {
+        fetchTradeHistory();
       })
       .subscribe();
 
@@ -162,10 +186,67 @@ export const TrainerCollection: React.FC<TrainerCollectionProps> = ({ user }) =>
 
       <div className="p-6">
         {activeTab === 'history' ? (
-          <div className="text-center py-12 bg-white/5 rounded-2xl border border-dashed border-white/10">
-            <ArrowRightLeft className="w-12 h-12 text-white/10 mx-auto mb-4" />
-            <p className="text-white/40 italic">Trade history feature coming soon!</p>
-          </div>
+          isLoadingHistory ? (
+            <div className="space-y-2">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="bg-white/5 border border-white/10 rounded-2xl p-4 flex items-center gap-4">
+                  <Skeleton className="w-12 h-12 rounded-lg" />
+                  <div className="flex-1">
+                    <SkeletonText className="h-4 w-3/4 mb-2" />
+                    <SkeletonText className="h-3 w-1/2" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : tradeHistory.length === 0 ? (
+            <div className="text-center py-12 bg-white/5 rounded-2xl border border-dashed border-white/10">
+              <ArrowRightLeft className="w-12 h-12 text-white/10 mx-auto mb-4" />
+              <p className="text-white/40 italic">Your trade history is empty.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {tradeHistory.map((trade) => {
+                const isOfferer = trade.offererUid === user?.id;
+                const otherParty = isOfferer ? (trade.trade_items?.sellerName || 'Unknown Trainer') : trade.offererName;
+                const tradeLabel = isOfferer ? 'Your offer to' : 'Offer received from';
+                
+                return (
+                  <div key={trade.id} className="bg-black/20 border border-white/5 p-4 rounded-xl shadow-inner">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <ArrowRightLeft className={`w-4 h-4 ${trade.status === 'accepted' ? 'text-green-500' : 'text-red-500'}`} />
+                        <span className="text-[10px] text-white/40 font-bold uppercase tracking-widest">{tradeLabel} <span className="text-white/80">{otherParty}</span></span>
+                      </div>
+                      <span className={`text-[10px] font-black uppercase px-3 py-1 rounded-full border ${
+                        trade.status === 'accepted' ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'
+                      }`}>
+                        {trade.status}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between bg-white/5 p-3 rounded-lg border border-white/5">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-black/40 rounded-lg flex items-center justify-center overflow-hidden border border-white/10">
+                          {trade.trade_items?.imageUrl ? (
+                            <SafeImage src={trade.trade_items.imageUrl} alt={trade.trade_items.pokemonName} className="w-8 h-8 object-contain" />
+                          ) : (
+                            <Star className="w-4 h-4 text-white/20" />
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-white font-black text-sm uppercase italic tracking-tighter">{trade.trade_items?.pokemonName || 'Unknown Pokémon'}</p>
+                          <p className="text-[10px] text-white/40 uppercase font-bold mt-0.5">Offered Amount</p>
+                        </div>
+                      </div>
+                      <div className="text-yellow-500 font-black text-lg flex items-center gap-1 sm:self-center">
+                        <span className="text-xs">🪙</span>{trade.offerAmount?.toLocaleString() || 0}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
         ) : isLoading ? (
           <div className={viewMode === 'grid' ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4" : "space-y-2"}>
             {[...Array(8)].map((_, i) => (

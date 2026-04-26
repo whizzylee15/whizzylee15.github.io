@@ -1818,6 +1818,7 @@ export default function App() {
         isSoundEnabled={isSoundEnabled}
         setIsSoundEnabled={setIsSoundEnabled}
         auctionStatus={auctionStatus}
+        onlineCount={onlineCount}
       />
 
       <SideMenu 
@@ -1865,7 +1866,7 @@ export default function App() {
       </div>
 
       {/* Main Content */}
-      <main className="relative z-10 max-w-4xl mx-auto px-4 py-8">
+      <main className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12">
         <AnimatePresence mode="wait">
           {activeView === 'auction' && (
             <motion.div
