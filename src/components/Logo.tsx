@@ -54,7 +54,7 @@ export const DreddBotzLogo = ({ isActive = false, isSold = false }: { isActive?:
     >
       {!imageError ? (
         <motion.img 
-          src="https://raw.githubusercontent.com/whizzylee15/whizzylee15.github.io/main/logo.png" 
+          src="/logo.png" 
           alt="DreddBotz Auctions" 
           className={`relative z-10 object-contain transition-all duration-1000 ${sizeClass} block m-auto`}
           style={{ filter: initialFilter }}
