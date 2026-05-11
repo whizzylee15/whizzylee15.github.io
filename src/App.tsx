@@ -364,42 +364,48 @@ export default function App() {
   useEffect(() => {
     // Global Error Listeners
     const handleGlobalError = (event: ErrorEvent) => {
-      console.error('Global Error:', event.error);
-      // Let ErrorBoundary handle fatal errors, but toast non-fatal ones
-      if (event.error?.message?.includes('network') || event.error?.message?.includes('Supabase')) {
-        toast.error('Connection Issue', { description: 'A network or database error occurred. Retrying...' });
+      try {
+        if (event.error?.message?.includes('network') || event.error?.message?.includes('Supabase')) {
+          toast.error('Connection Issue', { description: 'A network or database error occurred. Retrying...' });
+        }
+      } catch (e) {
+        // ignore
       }
     };
 
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
-      event.preventDefault(); // Prevent default browser logging
-      const reason = event.reason;
-      let message = 'An unexpected error occurred.';
-      
-      if (reason instanceof Error) {
-        message = reason.message;
-        try {
-          // Check if it's a JSON string from handleSupabaseError
-          const errInfo = JSON.parse(reason.message);
-          if (errInfo.error) {
-            message = errInfo.error;
+      try {
+        event.preventDefault(); // Prevent default browser logging
+        const reason = event.reason;
+        let message = 'An unexpected error occurred.';
+        
+        if (reason instanceof Error) {
+          message = reason.message;
+          try {
+            // Check if it's a JSON string from handleSupabaseError
+            const errInfo = JSON.parse(reason.message);
+            if (errInfo.error) {
+              message = errInfo.error;
+            }
+          } catch (e) {
+            // Not JSON, use message as is
           }
-        } catch (e) {
-          // Not JSON, use message as is
+        } else if (typeof reason === 'string' && reason.trim() !== '') {
+          message = reason;
+        } else if (reason && typeof reason === 'object' && reason.message) {
+          message = String(reason.message);
         }
-      } else if (typeof reason === 'string' && reason.trim() !== '') {
-        message = reason;
-      } else if (reason && typeof reason === 'object' && reason.message) {
-        message = reason.message;
-      }
 
-      if (message.toLowerCase().includes('permission')) {
-        toast.error('Access Denied', { description: 'You do not have permission to perform this action.' });
-      } else {
-        // Only toast if it's not a common/expected error
-        if (!message.includes('popup-closed-by-user') && !message.includes('cancelled-popup-request') && message !== 'An unexpected error occurred.') {
-          toast.error('Application Error', { description: message });
+        if (message.toLowerCase().includes('permission')) {
+          toast.error('Access Denied', { description: 'You do not have permission to perform this action.' });
+        } else {
+          // Only toast if it's not a common/expected error
+          if (!message.includes('popup-closed-by-user') && !message.includes('cancelled-popup-request') && message !== 'An unexpected error occurred.') {
+            toast.error('Application Error', { description: message });
+          }
         }
+      } catch (e) {
+        // ignore
       }
     };
 
