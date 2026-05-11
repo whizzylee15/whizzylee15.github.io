@@ -54,7 +54,7 @@ export const DreddBotzLogo = ({ isActive = false, isSold = false }: { isActive?:
     >
       {!imageError ? (
         <motion.img 
-          src="/logo.png" 
+          src="https://raw.githubusercontent.com/whizzylee15/whizzylee15.github.io/main/logo.png" 
           alt="DreddBotz Auctions" 
           className={`relative z-10 object-contain transition-all duration-1000 ${sizeClass} block m-auto`}
           style={{ filter: initialFilter }}
@@ -66,9 +66,9 @@ export const DreddBotzLogo = ({ isActive = false, isSold = false }: { isActive?:
             ]
           }}
           transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-          referrerPolicy="no-referrer"
-          onError={(e) => {
+          onError={() => {
             setImageError(true);
+            console.error("Image loading failed for DreddBotz logo");
           }}
         />
       ) : (

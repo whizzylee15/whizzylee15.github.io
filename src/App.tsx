@@ -134,6 +134,8 @@ export default function App() {
   const [isSoundEnabled, setIsSoundEnabled] = useState(true);
   const [activeRoomId, setActiveRoomId] = useState('Room 1');
   const [onlineCount, setOnlineCount] = useState(0);
+  const [currentUserRank, setCurrentUserRank] = useState<number | null>(null);
+  const previousPriceRef = useRef<number | string>(0);
   
   useEffect(() => {
     // Handle OAuth popup callback
@@ -201,6 +203,12 @@ export default function App() {
   }, [user]);
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const profileRef = useRef<UserProfile | null>(null);
+
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -254,7 +262,21 @@ export default function App() {
         .single();
       
       if (roomData?.current_auction) {
-        setAuction(roomData.current_auction);
+        setAuction(prev => {
+          if (
+            prev.name !== 'Awaiting Signal...' && 
+            prev.name === roomData.current_auction.name &&
+            Number(roomData.current_auction.currentPrice) > Number(prev.currentPrice) &&
+            roomData.current_auction.winnerUid !== userRef.current?.id
+          ) {
+             toast(`New bid on ${roomData.current_auction.name}!`, {
+               description: `${roomData.current_auction.winner} bid 🪙${Number(roomData.current_auction.currentPrice).toLocaleString()}`,
+               position: 'bottom-right',
+               duration: 3000
+             });
+          }
+          return roomData.current_auction;
+        });
       } else {
         setAuction({
           name: 'Awaiting Signal...',
@@ -464,6 +486,7 @@ export default function App() {
   }, []);
 
   // Leaderboard Listener
+  const fetchRankRef = useRef(false);
   useEffect(() => {
     const fetchLeaderboard = async () => {
       const { data, error } = await supabase
@@ -477,11 +500,26 @@ export default function App() {
         if (error.code !== '42501') {
           console.error('Error fetching leaderboard:', error);
         }
-        return;
-      }
-      
-      if (data) {
+      } else if (data) {
         setLeaderboard(data.map(d => ({ uid: d.id, ...d })) as UserProfile[]);
+      }
+
+      // Fetch current user rank
+      if (userRef.current && profileRef.current && !fetchRankRef.current) {
+        fetchRankRef.current = true;
+        try {
+          const { count } = await supabase
+            .from('users')
+            .select('*', { count: 'exact', head: true })
+            .gte('winCount', profileRef.current.winCount || 0)
+            .neq('id', userRef.current.id);
+            
+          setCurrentUserRank((count || 0) + 1);
+        } catch (e) {
+          console.error('Error fetching user rank', e);
+        } finally {
+          fetchRankRef.current = false;
+        }
       }
     };
 
@@ -1945,7 +1983,7 @@ export default function App() {
               exit={{ opacity: 0, x: -20 }}
               transition={{ duration: 0.3 }}
             >
-              <Leaderboard leaderboard={leaderboard} />
+              <Leaderboard leaderboard={leaderboard} currentUserUid={user?.id} currentUserRank={currentUserRank} />
             </motion.div>
           )}
 

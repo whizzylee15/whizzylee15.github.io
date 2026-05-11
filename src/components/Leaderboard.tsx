@@ -13,14 +13,18 @@ interface UserProfile {
 
 interface LeaderboardProps {
   leaderboard: UserProfile[];
+  currentUserUid?: string;
+  currentUserRank?: number | null;
 }
 
-export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard }) => {
+export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard, currentUserUid, currentUserRank }) => {
   const calculateWinRate = (wins: number, losses: number) => {
     const total = wins + losses;
     if (total === 0) return 0;
     return Math.round((wins / total) * 100);
   };
+  
+  const isCurrentUserInTop10 = leaderboard.some(user => user.uid === currentUserUid);
 
   return (
     <div className="space-y-6">
@@ -33,10 +37,12 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard }) => {
             The Elite Trainers of DreddBotz
           </p>
         </div>
-        <div className="flex items-center gap-4 bg-white/5 border border-white/10 px-4 py-2 rounded-2xl backdrop-blur-xl">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-[10px] font-black text-white/60 uppercase tracking-widest">Live Updates</span>
+        <div className="flex flex-col gap-2 items-end">
+          <div className="flex items-center gap-4 bg-white/5 border border-white/10 px-4 py-2 rounded-2xl backdrop-blur-xl">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-[10px] font-black text-white/60 uppercase tracking-widest">Live Updates</span>
+            </div>
           </div>
         </div>
       </div>
@@ -45,12 +51,13 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard }) => {
         {leaderboard.length > 0 ? (
           leaderboard.map((entry, index) => {
             const winRate = calculateWinRate(entry.winCount || 0, entry.lossCount || 0);
-            const isTopThree = index < 3;
+            const isCurrentUser = entry.uid === currentUserUid;
             
             return (
               <div 
                 key={entry.uid}
                 className={`flex items-center justify-between p-1 rounded-[2rem] transition-all relative group overflow-hidden ${
+                  isCurrentUser ? 'bg-gradient-to-r from-purple-500/20 to-blue-500/20 border border-purple-500/50 shadow-[0_0_15px_rgba(168,85,247,0.3)] ring-2 ring-purple-500 z-10' :
                   index === 0 
                     ? 'bg-gradient-to-r from-yellow-500/20 to-transparent border border-yellow-500/30' 
                     : index === 1
@@ -79,6 +86,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard }) => {
                     </div>
                     
                     <div className={`w-14 h-14 rounded-2xl overflow-hidden border-2 transition-transform group-hover:scale-105 ${
+                      isCurrentUser ? 'border-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.5)]' :
                       index === 0 ? 'border-yellow-500/50 shadow-[0_0_20px_rgba(234,179,8,0.2)]' : 'border-white/10'
                     }`}>
                       {entry.avatarUrl ? (
@@ -98,8 +106,8 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard }) => {
                   {/* Info */}
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <h4 className={`text-lg font-black tracking-tight ${index === 0 ? 'text-white' : 'text-white/90'}`}>
-                        {entry.displayName}
+                      <h4 className={`text-lg font-black tracking-tight ${isCurrentUser ? 'text-purple-300' : index === 0 ? 'text-white' : 'text-white/90'}`}>
+                        {entry.displayName} {isCurrentUser && '(You)'}
                       </h4>
                       {index === 0 && (
                         <span className="bg-yellow-500 text-black text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest">Champion</span>
@@ -122,7 +130,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard }) => {
                 <div className="flex items-center gap-8 px-8">
                   <div className="text-center">
                     <div className={`text-2xl font-black italic tracking-tighter leading-none ${
-                      index === 0 ? 'text-yellow-400' : 'text-white'
+                      isCurrentUser ? 'text-purple-300' : index === 0 ? 'text-yellow-400' : 'text-white'
                     }`}>
                       {entry.winCount || 0}
                     </div>
@@ -143,6 +151,9 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard }) => {
                 {index === 0 && (
                   <div className="absolute inset-0 bg-gradient-to-r from-yellow-500/5 to-transparent pointer-events-none" />
                 )}
+                {isCurrentUser && (
+                   <div className="absolute inset-0 bg-gradient-to-r from-purple-500/5 to-blue-500/5 pointer-events-none" />
+                )}
               </div>
             );
           })
@@ -158,6 +169,28 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard }) => {
           </div>
         )}
       </div>
+
+      {currentUserUid && !isCurrentUserInTop10 && currentUserRank && (
+         <div className="mt-8 p-6 glass-card rounded-[2rem] border-2 border-purple-500/30 bg-purple-900/20 relative overflow-hidden">
+            <div className="absolute inset-0 bg-[linear-gradient(45deg,transparent_25%,rgba(168,85,247,0.1)_50%,transparent_75%,transparent_100%)] bg-[length:250px_250px] animate-shimmer pointer-events-none" />
+            <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-4">
+               <div>
+                 <h4 className="text-white font-black uppercase tracking-tighter text-lg mb-1 flex items-center gap-2">
+                   <TrendingUp className="w-5 h-5 text-purple-400" /> Keep Grinding!
+                 </h4>
+                 <p className="text-purple-200/60 text-xs font-medium">
+                   You are not in the top 10 yet, but you're climbing up.
+                 </p>
+               </div>
+               <div className="flex flex-col items-end">
+                 <span className="text-[10px] text-purple-300 font-bold uppercase tracking-widest">Your Current Rank</span>
+                 <span className="text-4xl font-black italic tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400">
+                    #{currentUserRank}
+                 </span>
+               </div>
+            </div>
+         </div>
+      )}
 
       <div className="mt-8 p-6 glass-card rounded-[2rem] border border-white/5 bg-gradient-to-br from-purple-600/5 to-blue-600/5">
         <div className="flex items-start gap-4">

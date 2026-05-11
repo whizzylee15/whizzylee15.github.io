@@ -5,7 +5,7 @@ import { User } from '@supabase/supabase-js';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer } from 'recharts';
 import { SafeImage } from './SafeImage';
 
-type TabType = 'stats' | 'settings' | 'activity';
+type TabType = 'stats' | 'settings' | 'activity' | 'watchlist';
 
 interface NotificationSettings {
   endingSoon: boolean;
@@ -176,6 +176,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             <div className="flex items-center gap-2 mb-8 p-1 glass-input rounded-2xl">
               {[
                 { id: 'stats', label: 'Stats', icon: BarChart3 },
+                { id: 'watchlist', label: 'Watchlist', icon: Star },
                 { id: 'settings', label: 'Settings', icon: Settings },
                 { id: 'activity', label: 'Activity', icon: Activity },
               ].map((tab) => (
@@ -441,6 +442,60 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                         </div>
                       )}
                     </div>
+                  </motion.div>
+                )}
+
+                {activeTab === 'watchlist' && (
+                  <motion.div
+                    key="watchlist-tab"
+                    initial={{ opacity: 0, x: 10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
+                    className="space-y-4"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="text-[10px] text-white/30 font-bold uppercase tracking-widest flex items-center gap-2">
+                        <Star className="w-3 h-3 text-yellow-400" /> Watchlisted Pokémon
+                      </h4>
+                      <span className="text-[10px] text-white/20 font-bold uppercase">
+                        {profile?.watchlist?.length || 0} Saved
+                      </span>
+                    </div>
+
+                    {profile?.watchlist && profile.watchlist.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {profile.watchlist.map((pokemon, idx) => (
+                          <motion.div
+                            key={pokemon}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.3, delay: idx * 0.05 }}
+                            className="bg-white/5 rounded-2xl p-4 flex items-center justify-between border border-white/10 group hover:border-yellow-500/50 transition-all hover:bg-yellow-500/5"
+                          >
+                            <span className="text-white font-black italic uppercase tracking-tighter group-hover:text-yellow-400 transition-colors">
+                              {pokemon}
+                            </span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const newWatchlist = profile.watchlist!.filter(p => p !== pokemon);
+                                onUpdateProfile({ watchlist: newWatchlist });
+                              }}
+                              className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-white/20 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                            >
+                              ✕
+                            </button>
+                          </motion.div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center py-12 text-center bg-white/5 rounded-3xl border border-white/5 border-dashed">
+                        <Star className="w-12 h-12 text-white/10 mb-4" />
+                        <p className="text-white/40 text-xs max-w-xs mx-auto">
+                          You haven't watchlisted any Pokémon yet. Look for the star icon during auctions to save them!
+                        </p>
+                      </div>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>

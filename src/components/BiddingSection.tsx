@@ -115,6 +115,21 @@ export const BiddingSection: React.FC<BiddingSectionProps> = ({
             }}
             className={`w-full bg-black/40 border ${error ? 'border-fuchsia-500/80 focus:border-fuchsia-400 shadow-[0_0_15px_rgba(217,70,239,0.3)]' : 'border-white/10 focus:border-purple-500/50'} rounded-2xl px-4 sm:px-6 py-3 sm:py-4 text-white placeholder:text-white/20 focus:outline-none transition-all font-bold text-center text-xl sm:text-2xl`}
           />
+          <div className="flex items-center justify-center gap-2 mt-3">
+            {[1000000, 5000000, 10000000].map(increment => (
+              <button
+                key={increment}
+                onClick={() => {
+                  const currentParams = Number(currentPrice) || 0;
+                  const newBid = Math.max(currentParams + 1000000, currentParams + increment);
+                  setBidAmount(newBid.toString());
+                }}
+                className="bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/90 border border-white/5 hover:border-white/20 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+              >
+                +{(increment / 1000000)}M
+              </button>
+            ))}
+          </div>
           <AnimatePresence>
             {error && (
               <motion.div 
