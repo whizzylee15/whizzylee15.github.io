@@ -365,7 +365,9 @@ export default function App() {
     // Global Error Listeners
     const handleGlobalError = (event: ErrorEvent) => {
       try {
-        if (event.error?.message?.includes('network') || event.error?.message?.includes('Supabase')) {
+        if (event.error?.message?.includes('Failed to fetch')) {
+          // Ignore failed to fetch to prevent spam
+        } else if (event.error?.message?.includes('network') || event.error?.message?.includes('Supabase')) {
           toast.error('Connection Issue', { description: 'A network or database error occurred. Retrying...' });
         }
       } catch (e) {
@@ -400,7 +402,7 @@ export default function App() {
           toast.error('Access Denied', { description: 'You do not have permission to perform this action.' });
         } else {
           // Only toast if it's not a common/expected error
-          if (!message.includes('popup-closed-by-user') && !message.includes('cancelled-popup-request') && message !== 'An unexpected error occurred.') {
+          if (!message.includes('popup-closed-by-user') && !message.includes('cancelled-popup-request') && message !== 'An unexpected error occurred.' && !message.includes('Failed to fetch')) {
             toast.error('Application Error', { description: message });
           }
         }
@@ -1862,7 +1864,6 @@ export default function App() {
         isSoundEnabled={isSoundEnabled}
         setIsSoundEnabled={setIsSoundEnabled}
         auctionStatus={auctionStatus}
-        onlineCount={onlineCount}
       />
 
       <SideMenu 

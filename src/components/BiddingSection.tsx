@@ -41,6 +41,13 @@ export const BiddingSection: React.FC<BiddingSectionProps> = ({
 
   const isWinning = userId && winnerUid === userId;
 
+  const getCurrentPresets = (price: number) => {
+    if (price >= 100_000_000) return [10_000_000, 25_000_000, 50_000_000];
+    if (price >= 50_000_000) return [5_000_000, 10_000_000, 25_000_000];
+    if (price >= 10_000_000) return [2_000_000, 5_000_000, 10_000_000];
+    return [1_000_000, 2_000_000, 5_000_000];
+  };
+
   return (
     <div className="glass-card rounded-3xl p-6 sm:p-8 mb-8 relative overflow-hidden">
       {/* Background Glow for Winning State */}
@@ -116,7 +123,7 @@ export const BiddingSection: React.FC<BiddingSectionProps> = ({
             className={`w-full bg-black/40 border ${error ? 'border-fuchsia-500/80 focus:border-fuchsia-400 shadow-[0_0_15px_rgba(217,70,239,0.3)]' : 'border-white/10 focus:border-purple-500/50'} rounded-2xl px-4 sm:px-6 py-3 sm:py-4 text-white placeholder:text-white/20 focus:outline-none transition-all font-bold text-center text-xl sm:text-2xl`}
           />
           <div className="flex items-center justify-center gap-2 mt-3">
-            {[1000000, 5000000, 10000000].map(increment => (
+            {getCurrentPresets(Number(currentPrice) || 0).map(increment => (
               <button
                 key={increment}
                 onClick={() => {

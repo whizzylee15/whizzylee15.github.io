@@ -73,7 +73,7 @@ export const DreddBotzLogo = ({ isActive = false, isSold = false }: { isActive?:
         />
       ) : (
         <motion.div 
-          className={`relative z-10 flex items-center justify-center transition-all duration-1000 ${sizeClass} block m-auto ${isSold ? 'text-yellow-400' : isActive ? 'text-[#4ade80]' : 'text-gray-500'}`}
+          className={`relative z-10 flex flex-col items-center justify-center transition-all duration-1000 ${sizeClass} block m-auto ${isSold ? 'text-yellow-400' : isActive ? 'text-[#4ade80]' : 'text-gray-500'}`}
           style={{ filter: initialFilter }}
           animate={{
             filter: [
@@ -85,6 +85,7 @@ export const DreddBotzLogo = ({ isActive = false, isSold = false }: { isActive?:
           transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
         >
           <Bot className="w-full h-full" />
+          <span className="absolute -bottom-8 w-[250px] text-center text-xs text-fuchsia-400 font-mono bg-black/60 px-2 py-1 rounded">⚠️ Missing logo.png. Please upload it to the public folder.</span>
         </motion.div>
       )}
     </motion.div>
