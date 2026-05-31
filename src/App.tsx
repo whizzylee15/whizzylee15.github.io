@@ -1976,9 +1976,9 @@ export default function App() {
                 />
               )}
 
-              <LiveChat isAuctionActive={isAuctionActive} user={user} activeRoomId={activeRoomId} socket={socketRef.current} />
+              <LiveChat isAuctionActive={isAuctionActive} user={user} activeRoomId={activeRoomId} socket={socketRef.current} isAdmin={isAuthorized} />
               
-              <BidHistory bidHistory={bidHistory} />
+              {isAuctionActive && <BidHistory bidHistory={bidHistory} />}
             </motion.div>
           )}
 
