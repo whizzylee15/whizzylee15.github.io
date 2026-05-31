@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MessageSquare, Send, User } from 'lucide-react';
+import { MessageSquare, Send, User, Maximize2, Minimize2 } from 'lucide-react';
 import { supabase } from '../supabase';
 
 interface ChatMessage {
@@ -23,6 +23,7 @@ export const LiveChat: React.FC<LiveChatProps> = ({ isAuctionActive, user, activ
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isOpen, setIsOpen] = useState(true);
+  const [isFullScreen, setIsFullScreen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -85,18 +86,31 @@ export const LiveChat: React.FC<LiveChatProps> = ({ isAuctionActive, user, activ
   if (!isAuctionActive) return null;
 
   return (
-    <div className="mt-8 glass-card rounded-3xl overflow-hidden flex flex-col h-[400px]">
+    <div className={`mt-8 glass-card overflow-hidden flex flex-col transition-all duration-300 ${isFullScreen ? 'fixed inset-0 z-[100] mt-0 rounded-none bg-black/95 backdrop-blur-3xl' : 'h-[400px] rounded-3xl'}`}>
       <div 
         className="p-4 border-b border-white/10 flex items-center justify-between glass-modal cursor-pointer"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => !isFullScreen && setIsOpen(!isOpen)}
       >
         <div className="flex items-center gap-2">
           <MessageSquare className="w-5 h-5 text-purple-400" />
           <h3 className="font-black uppercase tracking-widest text-sm text-white">Live Bidder Chat</h3>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          <span className="text-[10px] font-bold text-white/40 uppercase tracking-tighter">Live</span>
+        <div className="flex items-center gap-4">
+          {isOpen && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsFullScreen(!isFullScreen);
+              }}
+              className="p-1 hover:bg-white/10 rounded-lg transition-colors text-white/50 hover:text-white"
+            >
+              {isFullScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+          )}
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-[10px] font-bold text-white/40 uppercase tracking-tighter">Live</span>
+          </div>
         </div>
       </div>
 
