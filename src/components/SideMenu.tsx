@@ -11,6 +11,7 @@ interface SideMenuProps {
   activeView: 'auction' | 'trading' | 'collection' | 'archives' | 'leaderboard';
   setActiveView: (view: 'auction' | 'trading' | 'collection' | 'archives' | 'leaderboard') => void;
   onlineCount: number;
+  roomCounts?: Record<string, number>;
 }
 
 export const SideMenu: React.FC<SideMenuProps> = ({
@@ -21,7 +22,8 @@ export const SideMenu: React.FC<SideMenuProps> = ({
   setActiveRoomId,
   activeView,
   setActiveView,
-  onlineCount
+  onlineCount,
+  roomCounts = {}
 }) => {
   const [showTutorial, setShowTutorial] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
@@ -285,6 +287,12 @@ export const SideMenu: React.FC<SideMenuProps> = ({
                             <div className="text-[10px] text-white/20 font-medium">
                               {pokeName ? 'Auction Live' : 'Waiting...'}
                             </div>
+                            {roomCounts[room.id] > 0 && (
+                              <div className="flex items-center gap-1 ml-auto">
+                                <User className="w-2.5 h-2.5 text-white/40" />
+                                <span className="text-[10px] font-bold text-white/40">{roomCounts[room.id]}</span>
+                              </div>
+                            )}
                           </div>
                         </div>
                         {isActive && (

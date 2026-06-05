@@ -134,6 +134,7 @@ export default function App() {
   const [isSoundEnabled, setIsSoundEnabled] = useState(true);
   const [activeRoomId, setActiveRoomId] = useState('Room 1');
   const [onlineCount, setOnlineCount] = useState(0);
+  const [roomCounts, setRoomCounts] = useState<Record<string, number>>({});
   const [currentUserRank, setCurrentUserRank] = useState<number | null>(null);
   const previousPriceRef = useRef<number | string>(0);
   
@@ -1010,12 +1011,24 @@ export default function App() {
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState();
         setOnlineCount(Object.keys(state).length);
+        
+        const counts: Record<string, number> = {};
+        Object.values(state).forEach((presences: any) => {
+          presences.forEach((p: any) => {
+            if (p.roomId) {
+              const rId = p.roomId;
+              counts[rId] = (counts[rId] || 0) + 1;
+            }
+          });
+        });
+        setRoomCounts(counts);
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           await channel.track({
             online_at: new Date().toISOString(),
             displayName: user?.user_metadata?.full_name || 'Anonymous',
+            roomId: activeRoomId
           });
         }
       });
@@ -1023,7 +1036,7 @@ export default function App() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user]);
+  }, [user, activeRoomId]);
 
   // Timer & Sound Logic
   useEffect(() => {
@@ -1895,6 +1908,7 @@ export default function App() {
         onClose={() => setIsMenuOpen(false)}
         roomsStatus={roomsStatus}
         activeRoomId={activeRoomId}
+        roomCounts={roomCounts}
         setActiveRoomId={(id) => {
           setActiveRoomId(id);
           setActiveView('auction');

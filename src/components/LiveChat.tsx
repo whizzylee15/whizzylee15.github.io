@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MessageSquare, Send, User, Maximize2, Minimize2, Bell, BellOff, Smile, Pin, ArrowDown } from 'lucide-react';
+import { MessageSquare, Send, User, Maximize2, Minimize2, Bell, BellOff, Smile, Pin, ArrowDown, Copy, Check, Layout, List } from 'lucide-react';
 import { supabase } from '../supabase';
 
 interface ChatMessage {
@@ -53,7 +53,9 @@ export const LiveChat: React.FC<LiveChatProps> = ({ isAuctionActive, user, activ
   const [newMessage, setNewMessage] = useState('');
   const [isOpen, setIsOpen] = useState(true);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [isCompact, setIsCompact] = useState(false);
   const [isChatMuted, setIsChatMuted] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [reactions, setReactions] = useState<Record<string, Record<string, number>>>({});
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [pinnedMessage, setPinnedMessage] = useState<string | null>(null);
@@ -193,6 +195,12 @@ export const LiveChat: React.FC<LiveChatProps> = ({ isAuctionActive, user, activ
     }
   };
 
+  const handleCopyMessage = (id: string, text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
   if (!isAuctionActive) return null;
 
   return (
@@ -227,6 +235,16 @@ export const LiveChat: React.FC<LiveChatProps> = ({ isAuctionActive, user, activ
                 title={isFullScreen ? "Exit full screen" : "Full screen"}
               >
                 {isFullScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsCompact(!isCompact);
+                }}
+                className="p-1 hover:bg-white/10 rounded-lg transition-colors text-white/50 hover:text-white"
+                title={isCompact ? "Expanded view" : "Compact view"}
+              >
+                {isCompact ? <Layout className="w-4 h-4" /> : <List className="w-4 h-4" />}
               </button>
             </>
           )}
@@ -287,30 +305,44 @@ export const LiveChat: React.FC<LiveChatProps> = ({ isAuctionActive, user, activ
                   }
 
                   return (
-                    <div key={msg.id} className={`flex items-start gap-3 ${msg.userId === user?.id ? 'flex-row-reverse' : ''}`}>
+                    <div key={msg.id} className={`flex items-start gap-2 ${isCompact ? 'gap-2' : 'gap-3'} ${msg.userId === user?.id ? 'flex-row-reverse' : ''}`}>
                       {msg.userAvatar ? (
-                        <img src={msg.userAvatar} alt={msg.userName} className="w-8 h-8 rounded-full border border-white/10" referrerPolicy="no-referrer" />
+                        <img src={msg.userAvatar} alt={msg.userName} className={`${isCompact ? 'w-6 h-6' : 'w-8 h-8'} rounded-full border border-white/10`} referrerPolicy="no-referrer" />
                       ) : (
-                        <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center border border-white/10">
-                          <User className="w-4 h-4 text-white/40" />
+                        <div className={`${isCompact ? 'w-6 h-6' : 'w-8 h-8'} rounded-full bg-white/10 flex items-center justify-center border border-white/10`}>
+                          <User className={`${isCompact ? 'w-3 h-3' : 'w-4 h-4'} text-white/40`} />
                         </div>
                       )}
-                      <div className={`flex flex-col ${msg.userId === user?.id ? 'items-end' : 'items-start'}`}>
-                        <span className="text-[10px] font-black text-white/40 mb-1 uppercase tracking-tighter">
-                          {msg.userName}
-                          <span className="ml-2 font-normal opacity-70 normal-case">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        </span>
-                        <div className={`px-4 py-2 rounded-2xl text-sm relative group ${
+                      <div className={`flex flex-col ${msg.userId === user?.id ? 'items-end' : 'items-start'} max-w-[85%]`}>
+                        {!isCompact && (
+                          <span className="text-[10px] font-black text-white/40 mb-1 uppercase tracking-tighter">
+                            {msg.userName}
+                            <span className="ml-2 font-normal opacity-70 normal-case">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          </span>
+                        )}
+                        <div className={`${isCompact ? 'px-3 py-1.5' : 'px-4 py-2'} rounded-2xl text-sm relative group ${
                           msg.userId === user?.id 
                             ? 'bg-purple-600 text-white rounded-tr-none' 
                             : isMentioned 
                               ? 'bg-fuchsia-500/20 text-white border border-fuchsia-400/50 rounded-tl-none shadow-[0_0_15px_rgba(217,70,239,0.1)]'
                               : 'bg-white/10 text-white/90 rounded-tl-none border border-white/5'
                         }`}>
+                          {isCompact && (
+                            <span className="text-[10px] font-bold text-white/40 mr-1.5 inline-block opacity-50">
+                              {msg.userName}:
+                            </span>
+                          )}
                           {renderMessageText(msg.text, currentUserName)}
                           
-                          {/* Reaction Button (hover) */}
+                          {/* Reaction & Action Buttons (hover) */}
                           <div className={`absolute -top-3 ${msg.userId === user?.id ? '-left-3' : '-right-3'} opacity-0 group-hover:opacity-100 transition-opacity bg-black/80 rounded-full flex gap-1 p-1 border border-white/10 shadow-lg z-10`}>
+                            <button 
+                              onClick={() => handleCopyMessage(msg.id, msg.text)}
+                              className="w-6 h-6 flex items-center justify-center hover:bg-white/20 rounded-full text-xs transition-colors text-blue-400"
+                              title="Copy message"
+                            >
+                              {copiedId === msg.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                            </button>
                             {isAdmin && (
                               <button 
                                 onClick={() => handlePinMessage(msg.text)}
