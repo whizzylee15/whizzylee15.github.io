@@ -1,0 +1,21 @@
+{
+  "name": "DreddBotz Auction",
+  "short_name": "DreddBotz",
+  "description": "High-stakes Pokémon auctions for elite trainers.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a2e",
+  "theme_color": "#a855f7",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
