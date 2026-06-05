@@ -442,8 +442,21 @@ export default function App() {
       if (error) {
         console.error('Error getting session on mount:', error);
         // If refresh token is invalid, sign out to clear local state
-        if (error.message.includes('Refresh Token Not Found') || error.message.includes('Invalid Refresh Token')) {
-          supabase.auth.signOut().catch(console.error);
+        const isRefreshTokenError = 
+          error.message.includes('Refresh Token Not Found') || 
+          error.message.includes('Invalid Refresh Token') ||
+          error.message.includes('refresh_token_not_found');
+          
+        if (isRefreshTokenError) {
+          console.warn('Invalid refresh token detected on mount, clearing session...');
+          supabase.auth.signOut().then(() => {
+            // Force clear storage as a fallback if signOut doesn't fully clear it
+            for (const key in localStorage) {
+              if (key.includes('supabase.auth.token') || key.includes('sb-')) {
+                localStorage.removeItem(key);
+              }
+            }
+          }).catch(console.error);
         }
       }
       const currentUser = session?.user || null;
@@ -649,8 +662,19 @@ export default function App() {
             const { data: { session }, error } = await supabase.auth.getSession();
             if (error) {
               console.error('Error getting session after popup:', error);
-              if (error.message.includes('Refresh Token Not Found') || error.message.includes('Invalid Refresh Token')) {
-                supabase.auth.signOut().catch(console.error);
+              const isRefreshTokenError = 
+                error.message.includes('Refresh Token Not Found') || 
+                error.message.includes('Invalid Refresh Token') ||
+                error.message.includes('refresh_token_not_found');
+                
+              if (isRefreshTokenError) {
+                supabase.auth.signOut().then(() => {
+                  for (const key in localStorage) {
+                    if (key.includes('supabase.auth.token') || key.includes('sb-')) {
+                      localStorage.removeItem(key);
+                    }
+                  }
+                }).catch(console.error);
               }
             }
             if (session) {
