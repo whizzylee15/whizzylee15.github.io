@@ -104,9 +104,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             initial={{ scale: 0.9, y: 20 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.9, y: 20 }}
-            className="glass-modal rounded-3xl p-6 sm:p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto custom-scrollbar"
+            className="glass-modal rounded-3xl p-6 sm:p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto custom-scrollbar flex flex-col"
           >
-            <div className="flex justify-between items-center mb-6 sm:mb-8">
+            <div className="flex justify-between items-center mb-6 sm:mb-8 shrink-0">
               <div className="flex items-center gap-2 sm:gap-3">
                 <UserCircle className="text-purple-400 w-5 h-5 sm:w-6 sm:h-6" />
                 <h2 className="text-xl sm:text-2xl font-black text-white uppercase italic tracking-tighter">Trainer Profile</h2>
@@ -389,6 +389,41 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                           </div>
                         ))}
                       </div>
+                    </div>
+
+                    <div className="pt-6 border-t border-white/5 space-y-4">
+                      <h4 className="text-[10px] text-white/30 font-bold uppercase tracking-widest flex items-center gap-2">
+                        <Shield className="w-3 h-3 text-red-500" /> Account & Session
+                      </h4>
+                      <div className="flex flex-wrap gap-3">
+                        <button
+                          onClick={() => {
+                            import('../supabase').then(({ supabase }) => {
+                              supabase.auth.signOut().then(() => {
+                                window.location.reload();
+                              });
+                            });
+                          }}
+                          className="flex-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
+                        >
+                          Sign Out
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm('This will sign you out and clear all local data. Continue?')) {
+                              localStorage.clear();
+                              sessionStorage.clear();
+                              window.location.reload();
+                            }
+                          }}
+                          className="flex-1 bg-white/5 hover:bg-white/10 text-white/40 border border-white/5 px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
+                        >
+                          Clear Session Cache
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-white/20 text-center">
+                        Clear session cache if you experience persistent login errors or "Refresh Token Not Found" issues.
+                      </p>
                     </div>
                   </motion.div>
                 )}
