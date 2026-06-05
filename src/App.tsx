@@ -1948,7 +1948,7 @@ export default function App() {
               {/* 1. Top Container: Pulsing Logo */}
               <div className="flex justify-center mb-8 h-28 sm:h-32">
                 <AnimatePresence>
-                  {(isAuctionActive && pokemonImageUrl) && (
+                  {isAuctionActive && (
                     <motion.div
                       layoutId="main-logo"
                       transition={{ type: "spring", stiffness: 100, damping: 15 }}

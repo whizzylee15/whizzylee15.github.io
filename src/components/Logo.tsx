@@ -54,9 +54,9 @@ export const DreddBotzLogo = ({ isActive = false, isSold = false }: { isActive?:
     >
       {!imageError ? (
         <motion.img 
-          src="https://wsrv.nl/?url=raw.githubusercontent.com/whizzylee15/whizzylee15.github.io/main/logo.png&w=1000&output=webp" 
+          src="https://raw.githubusercontent.com/whizzylee15/whizzylee15.github.io/main/logo.png" 
           alt="DreddBotz Auctions" 
-          className={`relative z-10 object-contain transition-all duration-1000 ${sizeClass} block m-auto`}
+          className={`relative z-10 object-contain transition-all duration-1000 ${sizeClass} m-auto`}
           style={{ filter: initialFilter }}
           animate={{
             filter: [
@@ -73,7 +73,7 @@ export const DreddBotzLogo = ({ isActive = false, isSold = false }: { isActive?:
         />
       ) : (
         <motion.div 
-          className={`relative z-10 flex flex-col items-center justify-center transition-all duration-1000 ${sizeClass} block m-auto ${isSold ? 'text-yellow-400' : isActive ? 'text-[#4ade80]' : 'text-gray-500'}`}
+          className={`relative z-10 flex flex-col items-center justify-center transition-all duration-1000 ${sizeClass} m-auto ${isSold ? 'text-yellow-400' : isActive ? 'text-[#4ade80]' : 'text-gray-500'}`}
           style={{ filter: initialFilter }}
           animate={{
             filter: [

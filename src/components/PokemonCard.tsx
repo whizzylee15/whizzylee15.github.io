@@ -252,7 +252,7 @@ export const PokemonCard: React.FC<PokemonCardProps> = ({
             >
               <div className="absolute inset-0 bg-purple-500/10 blur-3xl rounded-full" />
               
-              {(!isAuctionActive || !pokemonImageUrl) ? (
+              {!isAuctionActive ? (
                 <motion.div
                   layoutId="main-logo"
                   transition={{ type: "spring", stiffness: 100, damping: 15 }}
@@ -262,12 +262,18 @@ export const PokemonCard: React.FC<PokemonCardProps> = ({
                 </motion.div>
               ) : (
                 <div className="w-full h-full relative z-10">
-                  <SafeImage 
-                    src={pokemonImageUrl} 
-                    alt={auction.name} 
-                    className={`w-full h-full object-contain drop-shadow-2xl transition-all duration-500 ${auction.name === 'Awaiting Signal...' ? 'grayscale blur-sm' : ''}`}
-                    containerClassName="w-full h-full"
-                  />
+                  {pokemonImageUrl ? (
+                    <SafeImage 
+                      src={pokemonImageUrl} 
+                      alt={auction.name} 
+                      className={`w-full h-full object-contain drop-shadow-2xl transition-all duration-500`}
+                      containerClassName="w-full h-full"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <Loader2 className="w-12 h-12 text-purple-500 animate-spin" />
+                    </div>
+                  )}
                 </div>
               )}
             </motion.div>
